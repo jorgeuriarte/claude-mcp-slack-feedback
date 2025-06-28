@@ -53,10 +53,26 @@ The installer will:
 
 ## Slack App Setup
 
+### Option 1: Using App Manifest (Recommended)
+
+1. **Create app from manifest:**
+   - Go to [https://api.slack.com/apps](https://api.slack.com/apps)
+   - Click "Create New App" → "From an app manifest"
+   - Select your workspace
+   - Choose "YAML" format
+   - Copy and paste the contents of `slack-app-manifest.yml`
+   - Review and create
+
+2. **Install to workspace:**
+   - Click "Install to Workspace"
+   - Copy the Bot User OAuth Token (starts with `xoxb-`)
+
+### Option 2: Manual Setup
+
 1. **Create a Slack App:**
    - Go to [https://api.slack.com/apps](https://api.slack.com/apps)
    - Click "Create New App" → "From scratch"
-   - Name it "Claude Feedback" (or your preference)
+   - Name it "Claude MCP Feedback"
    - Select your workspace
 
 2. **Configure OAuth Scopes:**
@@ -67,15 +83,23 @@ The installer will:
    - `channels:read` - List channels
    - `users:read` - Get user info
    - `users:read.email` - Match by email
+   - `channels:history` - Read channel messages
+   - `groups:history` - Read private channel messages
+   - `im:history` - Read direct messages
+   - `mpim:history` - Read group direct messages
 
-3. **Install to Workspace:**
-   - Click "Install to Workspace"
-   - Copy the Bot User OAuth Token (starts with `xoxb-`)
-
-4. **Optional: Configure Event Subscriptions (for webhooks):**
+3. **Optional: Configure Event Subscriptions (for webhooks):**
    - Enable Events
    - The tunnel URL will be provided when you start a session
-   - Subscribe to `message.channels` event
+   - Subscribe to bot events:
+     - `message.channels`
+     - `message.groups`
+     - `message.im`
+     - `message.mpim`
+
+4. **Install to Workspace:**
+   - Click "Install to Workspace"
+   - Copy the Bot User OAuth Token (starts with `xoxb-`)
 
 ## Usage
 

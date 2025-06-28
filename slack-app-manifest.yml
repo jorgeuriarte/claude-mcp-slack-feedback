@@ -1,0 +1,41 @@
+display_information:
+  name: Claude MCP Feedback
+  description: Enables Claude Code to request human feedback through Slack
+  background_color: "#4A154B"
+  long_description: This app allows Claude Code (AI assistant) to ask questions and receive feedback from your team during task execution. It creates dedicated channels for each session and supports both real-time webhooks and polling for responses.
+
+features:
+  bot_user:
+    display_name: Claude Feedback Bot
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:write
+      - chat:write
+      - channels:read
+      - users:read
+      - users:read.email
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+
+settings:
+  event_subscriptions:
+    # The request URL will be set dynamically by the MCP server when using webhook mode
+    # For initial setup, you can leave this empty or use a placeholder
+    request_url: ""
+    bot_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+      
+  interactivity:
+    is_enabled: false
+    
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
