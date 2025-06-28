@@ -320,6 +320,21 @@ export class SlackClient {
       );
     }
 
+    // If found but bot is not a member, try to join
+    if (channel && !channel.is_member) {
+      try {
+        await this.retryWithBackoff(() =>
+          this.client!.conversations.join({
+            channel: channel.id!
+          })
+        );
+        console.log(`Bot joined channel #${channel.name}`);
+      } catch (error: any) {
+        console.error(`Failed to join channel #${channel.name}:`, error.message);
+        // Still return the channel ID, let the user know in the UI
+      }
+    }
+
     return channel?.id;
   }
 

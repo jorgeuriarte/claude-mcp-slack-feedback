@@ -13,6 +13,7 @@ oauth_config:
   scopes:
     bot:
     - channels:manage
+    - channels:join
     - chat:write
     - channels:read
     - users:read

@@ -377,7 +377,7 @@ class SlackFeedbackMCPServer {
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.2.0'
+      version: '1.2.1'
     };
     const buildTime = new Date().toISOString();
     
@@ -385,7 +385,7 @@ class SlackFeedbackMCPServer {
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.2.0:\n- Select specific channels with set_channel\n- List available channels\n- Session remembers selected channel\n- No more auto-created channels`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.2.1:\n- Bot now attempts to auto-join public channels\n- Better error messages when bot is not channel member\n- Added channels:join scope to manifest\n\n✨ v1.2.0:\n- Select specific channels with set_channel\n- List available channels\n- Session remembers selected channel`,
         },
       ],
     };
@@ -417,11 +417,22 @@ class SlackFeedbackMCPServer {
       channelName: channelInfo.name
     });
 
+    // Check if bot is member
+    const channels = await this.slackClient.listChannels();
+    const channelDetails = channels.find(ch => ch.name === channelInfo.name);
+    const isMember = channelDetails?.is_member || false;
+
+    let message = `✅ Channel set to #${channelInfo.name}\n\nAll feedback for this session will be sent to this channel.`;
+    
+    if (!isMember) {
+      message += `\n\n⚠️ Note: The bot may not be a member of this channel. If you can't send messages, please invite the bot to #${channelInfo.name} using:\n/invite @your-bot-name`;
+    }
+
     return {
       content: [
         {
           type: 'text',
-          text: `✅ Channel set to #${channelInfo.name}\n\nAll feedback for this session will be sent to this channel.`,
+          text: message,
         },
       ],
     };
