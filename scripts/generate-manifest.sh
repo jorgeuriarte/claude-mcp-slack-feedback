@@ -45,13 +45,10 @@ oauth_config:
       - mpim:history
 
 settings:
+  # Event subscriptions disabled by default (polling mode)
+  # Enable manually in Slack app settings if you want webhooks
   event_subscriptions:
-    request_url: ""
-    bot_events:
-      - message.channels
-      - message.groups
-      - message.im
-      - message.mpim
+    is_enabled: false
       
   interactivity:
     is_enabled: false

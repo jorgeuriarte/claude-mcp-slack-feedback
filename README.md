@@ -110,21 +110,34 @@ In Claude, use the setup tool:
 setup_slack_config with bot token "xoxb-your-token-here"
 ```
 
-### Webhook Mode Setup (Optional)
+### Webhook Mode Setup (Optional - Advanced Users)
 
-When you first use `ask_feedback`, if cloudflared is installed, the system will:
-1. Start a tunnel and display the webhook URL
-2. You'll see something like: `Tunnel URL: https://abc123.trycloudflare.com`
+**By default, the bot uses polling mode which works great for most users. Webhooks are optional.**
 
-To enable webhooks in Slack:
-1. Go to your Slack app settings
-2. Navigate to "Event Subscriptions"
-3. Enable events
-4. Set Request URL to: `https://abc123.trycloudflare.com/slack/events`
-5. Verify the URL (it should show as verified)
-6. Save changes
+If you want real-time responses via webhooks:
 
-Note: The tunnel URL changes each session, so webhooks are best for development/testing. For production, use polling mode or set up a permanent server.
+1. **First time using `ask_feedback`:**
+   - The system will show: `🔗 Webhook URL: https://abc123.trycloudflare.com/slack/events`
+   - Copy this URL
+
+2. **Configure Slack for webhooks:**
+   - Go to your app at https://api.slack.com/apps
+   - Select your app → "Event Subscriptions" 
+   - Toggle "Enable Events" to On
+   - Paste the webhook URL in "Request URL"
+   - Wait for "Verified" ✓ 
+   - Under "Subscribe to bot events", add:
+     - `message.channels`
+     - `message.groups` 
+     - `message.im`
+     - `message.mpim`
+   - Click "Save Changes"
+
+**Important notes about webhooks:**
+- The URL changes every session (it's a temporary tunnel)
+- You need to update Slack settings each time
+- For this reason, **polling mode is recommended for regular use**
+- Webhooks are mainly useful for testing real-time features
 
 ### Asking for Feedback
 

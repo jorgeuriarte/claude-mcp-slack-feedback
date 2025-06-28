@@ -212,12 +212,15 @@ class SlackFeedbackMCPServer {
     let responseText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${session.channelId}\nThread: ${threadTs}\nMode: ${session.mode}`;
     
     if (session.mode === 'webhook' && session.tunnelUrl) {
-      responseText += `\n\n🔗 Webhook URL: ${session.tunnelUrl}/slack/events`;
-      responseText += `\n\n⚠️ To enable real-time responses:`;
-      responseText += `\n1. Go to your Slack app settings`;
-      responseText += `\n2. Enable Event Subscriptions`;
-      responseText += `\n3. Set Request URL to: ${session.tunnelUrl}/slack/events`;
-      responseText += `\n4. Save changes`;
+      responseText += `\n\n🔗 Webhook URL ready for real-time responses!`;
+      responseText += `\n${session.tunnelUrl}/slack/events`;
+      responseText += `\n\n📋 Quick setup (one-time only):`;
+      responseText += `\n1. Open: https://api.slack.com/apps (your app)`;
+      responseText += `\n2. Go to "Event Subscriptions" → Enable Events`;
+      responseText += `\n3. Paste URL above in "Request URL" → Wait for ✓`;
+      responseText += `\n4. Add bot events: message.channels, message.groups`;
+      responseText += `\n5. Save Changes`;
+      responseText += `\n\n✨ Or just wait 1-2 seconds for polling (no setup needed)`;
     }
     
     responseText += `\n\nUse get_responses to retrieve the answer.`;
@@ -337,7 +340,7 @@ class SlackFeedbackMCPServer {
       const channel = await this.slackClient.createChannel(channelName);
       await this.sessionManager.updateSessionChannel(session.sessionId, channel.id);
       
-      // Try to setup webhook
+      // Try to setup webhook with cloudflared
       try {
         await this.setupWebhook(session.sessionId, session.port);
       } catch (error) {

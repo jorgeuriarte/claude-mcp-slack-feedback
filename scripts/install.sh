@@ -193,18 +193,24 @@ main() {
     print_success "Installation complete!"
     echo
     echo "Next steps:"
-    echo "1. Create a Slack app at https://api.slack.com/apps"
-    echo "2. Add the following OAuth scopes:"
-    echo "   - channels:write"
-    echo "   - chat:write"
-    echo "   - channels:read"
-    echo "   - users:read"
-    echo "   - users:read.email"
-    echo "3. Install the app to your workspace and copy the bot token"
-    echo "4. Restart Claude Desktop"
-    echo "5. Use the 'setup_slack_config' tool in Claude to configure your bot token"
+    echo "1. Create a Slack app:"
+    echo "   a) Go to https://api.slack.com/apps"
+    echo "   b) Click 'Create New App' → 'From an app manifest'"
+    echo "   c) Select your workspace"
+    echo "   d) Choose YAML and paste the contents of slack-app-manifest.yml"
+    echo "   e) Create the app"
     echo
-    echo "For more information, see the README.md file"
+    echo "2. Install the app to your workspace:"
+    echo "   - Click 'Install to Workspace'"
+    echo "   - Copy the Bot User OAuth Token (starts with xoxb-)"
+    echo
+    echo "3. Restart Claude Desktop"
+    echo
+    echo "4. In Claude, configure your token:"
+    echo "   setup_slack_config with bot token \"xoxb-your-token-here\""
+    echo
+    echo "The bot will use polling mode by default (no webhook configuration needed)."
+    echo "For webhook mode setup, see the README.md file."
 }
 
 # Run main function
