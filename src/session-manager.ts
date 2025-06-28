@@ -147,4 +147,30 @@ export class SessionManager {
   getMainChannelName(username: string): string {
     return `claude-${username}-main`;
   }
+
+  static extractSessionLabelFromPath(): string {
+    // Extract meaningful session name from current working directory
+    const cwd = process.cwd();
+    const pathParts = cwd.split('/').filter(p => p && p !== '');
+    
+    // Take last 2-3 meaningful parts
+    if (pathParts.length >= 2) {
+      const relevant = pathParts.slice(-3).filter(p => 
+        !p.startsWith('.') && // Skip hidden directories
+        p !== 'src' && // Skip common subdirectories
+        p !== 'dist' &&
+        p !== 'node_modules'
+      );
+      
+      if (relevant.length >= 2) {
+        // Join last 2 parts with hyphen
+        return relevant.slice(-2).join('-');
+      } else if (relevant.length === 1) {
+        return relevant[0];
+      }
+    }
+    
+    // Fallback to last directory name
+    return pathParts[pathParts.length - 1] || 'workspace';
+  }
 }

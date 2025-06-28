@@ -177,6 +177,20 @@ class SlackFeedbackMCPServer {
             required: ['label'],
           },
         },
+        {
+          name: 'set_session_contact',
+          description: 'Set the contact to mention in Slack messages (e.g., @jorge or @here)',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              contact: {
+                type: 'string',
+                description: 'Slack username to mention (without @) or "here" for @here',
+              },
+            },
+            required: ['contact'],
+          },
+        },
       ],
     }));
 
@@ -211,6 +225,9 @@ class SlackFeedbackMCPServer {
           
           case 'set_session_label':
             return await this.setSessionLabel(args as { label: string });
+          
+          case 'set_session_contact':
+            return await this.setSessionContact(args as { contact: string });
           
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
@@ -262,6 +279,34 @@ class SlackFeedbackMCPServer {
           {
             type: 'text',
             text: `⚠️ No channel selected for this session!\n\nPlease first:\n1. Use 'list_channels' to see available channels\n2. Use 'set_channel' to select a channel\n\nExample: set_channel with channel "general"`,
+          },
+        ],
+      };
+    }
+
+    // Check if session needs configuration
+    if (!session.sessionLabel || !session.sessionContact) {
+      const suggestedLabel = SessionManager.extractSessionLabelFromPath();
+      let configMessage = `⚠️ Session needs configuration before sending feedback:\n\n`;
+      
+      if (!session.sessionLabel) {
+        configMessage += `📝 **Session Label**: Not set\n`;
+        configMessage += `   Suggested: "${suggestedLabel}"\n`;
+        configMessage += `   Use: set_session_label with label "${suggestedLabel}"\n\n`;
+      }
+      
+      if (!session.sessionContact) {
+        configMessage += `👤 **Contact**: Not set\n`;
+        configMessage += `   Use: set_session_contact with contact "jorge" (or "here" for @here)\n\n`;
+      }
+      
+      configMessage += `These settings help identify your session in Slack and notify the right people.`;
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: configMessage,
           },
         ],
       };
@@ -347,6 +392,22 @@ class SlackFeedbackMCPServer {
           },
         ],
       };
+    }
+
+    // Send confirmation to Slack that responses were received
+    if (responses.length > 0 && responses[0].threadTs) {
+      try {
+        const firstResponse = responses[0];
+        const summary = firstResponse.response.substring(0, 100) + 
+                       (firstResponse.response.length > 100 ? '...' : '');
+        await this.slackClient.updateProgress(
+          `✅ Recibido: "${summary}". Procesando...`,
+          firstResponse.threadTs
+        );
+      } catch (error) {
+        // Don't fail if confirmation fails
+        console.error('Failed to send confirmation:', error);
+      }
     }
 
     const responseText = responses.map(r => 
@@ -504,6 +565,32 @@ class SlackFeedbackMCPServer {
         {
           type: 'text',
           text: `✅ Session label set to: "${params.label}"\n\nThis label will appear in all Slack messages from this session.`,
+        },
+      ],
+    };
+  }
+
+  private async setSessionContact(params: { contact: string }) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Add @ prefix if not present and not "here"
+    const contact = params.contact === 'here' ? '@here' : 
+                   params.contact.startsWith('@') ? params.contact : `@${params.contact}`;
+
+    await this.sessionManager.updateSession(session.sessionId, {
+      sessionContact: contact
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Session contact set to: ${contact}\n\nThis contact will be mentioned in all Slack messages from this session.`,
         },
       ],
     };

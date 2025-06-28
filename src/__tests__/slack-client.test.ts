@@ -67,7 +67,7 @@ describe('SlackClient', () => {
         team: { domain: 'testworkspace' }
       });
 
-      const result = await slackClient.setToken('xoxb-test');
+      const result = await slackClient.setToken('xoxb-test', 'testworkspace.slack.com');
       
       expect(result).toEqual({
         workspaceUrl: 'testworkspace.slack.com',
@@ -84,7 +84,7 @@ describe('SlackClient', () => {
     it('should throw on invalid token', async () => {
       mockWebClient.auth.test.mockResolvedValue({ ok: false });
       
-      await expect(slackClient.setToken('invalid')).rejects.toThrow('Invalid bot token');
+      await expect(slackClient.setToken('invalid', 'test.slack.com')).rejects.toThrow('Invalid bot token');
     });
   });
 

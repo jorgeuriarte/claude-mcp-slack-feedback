@@ -175,7 +175,7 @@ describe('SessionManager', () => {
     it('should generate correct channel names', () => {
       const sessionId = 'abc123';
       
-      expect(sessionManager.getChannelName('jorge', sessionId)).toBe('claude-jorge-abc123');
+      expect(sessionManager.getChannelName('jorge', sessionId)).toBe('claude-jorg-abc123');
       expect(sessionManager.getMainChannelName('jorge')).toBe('claude-jorge-main');
     });
   });

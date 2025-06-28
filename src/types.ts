@@ -17,6 +17,7 @@ export interface Session {
   channelId: string;
   channelName?: string; // Store the channel name for display
   sessionLabel?: string; // Custom label for the session
+  sessionContact?: string; // Contact to mention in messages (@user or @here)
   port: number;
   createdAt: Date;
   lastActivity: Date;

@@ -169,13 +169,23 @@ export class SlackClient {
     const sessionDisplay = session.sessionLabel ? 
       `${session.sessionLabel} (${session.sessionId})` : 
       session.sessionId;
+    
+    // Format header with session label and contact mention
+    let headerText = `[${sessionDisplay}]`;
+    if (session.sessionContact) {
+      headerText += ` ${session.sessionContact}`;
+    }
+    headerText += `\n${sessionEmoji} *Question from Claude*`;
+    if (user?.username) {
+      headerText += `\n*User:* ${user.username}`;
+    }
       
     const blocks: any[] = [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `${sessionEmoji} *Question from Claude*\n*Session:* ${sessionDisplay}${user?.username ? `\n*User:* ${user.username}` : ''}`
+          text: headerText
         }
       },
       {
@@ -243,12 +253,6 @@ export class SlackClient {
     return emojis[index];
   }
 
-  private getSessionColor(sessionId: string): string {
-    // Generate consistent color based on session ID
-    const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#48DBFB', '#FF9FF3', '#54A0FF'];
-    const index = sessionId.charCodeAt(0) % colors.length;
-    return colors[index];
-  }
 
   async updateProgress(message: string, threadTs: string): Promise<void> {
     if (!this.client) {
@@ -265,10 +269,13 @@ export class SlackClient {
       `${session.sessionLabel} (${session.sessionId})` : 
       session.sessionId;
 
+    // Format with session label
+    let progressText = `[${sessionDisplay}]\n${sessionEmoji} *Progress Update:*\n${message}`;
+
     await this.retryWithBackoff(() =>
       this.client!.chat.postMessage({
         channel: session.channelId,
-        text: `${sessionEmoji} **Progress Update [Session: ${sessionDisplay}]:**\n${message}`,
+        text: progressText,
         thread_ts: threadTs,
         mrkdwn: true,
         username: `Claude Session ${sessionDisplay}`,
@@ -389,12 +396,18 @@ export class SlackClient {
       throw new Error('Slack client not configured');
     }
 
+    console.error(`[findChannel] Looking for channel: ${channelName}`);
+
     // First try with exact name match
     const list = await this.retryWithBackoff(() =>
       this.client!.conversations.list({
-        limit: 1000
+        limit: 1000,
+        types: 'public_channel,private_channel',
+        exclude_archived: true
       })
     );
+
+    console.error(`[findChannel] Found ${list.channels?.length || 0} channels`);
 
     // Try exact match first
     let channel = list.channels?.find(c => c.name === channelName);
@@ -406,19 +419,30 @@ export class SlackClient {
       );
     }
 
+    if (!channel) {
+      console.error(`[findChannel] Channel ${channelName} not found in list`);
+      return undefined;
+    }
+
+    console.error(`[findChannel] Found channel ${channel.name} (ID: ${channel.id}, is_member: ${channel.is_member})`);
+
     // If found but bot is not a member, try to join
     if (channel && !channel.is_member) {
+      console.error(`[findChannel] Bot is not a member of #${channel.name}, attempting to join...`);
       try {
         await this.retryWithBackoff(() =>
           this.client!.conversations.join({
             channel: channel.id!
           })
         );
-        console.log(`Bot joined channel #${channel.name}`);
+        console.error(`[findChannel] ✅ Successfully joined channel #${channel.name}`);
       } catch (error: any) {
-        console.error(`Failed to join channel #${channel.name}:`, error.message);
+        console.error(`[findChannel] ❌ Failed to join channel #${channel.name}: ${error.message}`);
+        console.error(`[findChannel] Error details:`, error);
         // Still return the channel ID, let the user know in the UI
       }
+    } else if (channel && channel.is_member) {
+      console.error(`[findChannel] Bot is already a member of #${channel.name}`);
     }
 
     return channel?.id;
@@ -432,6 +456,7 @@ export class SlackClient {
     const list = await this.retryWithBackoff(() =>
       this.client!.conversations.list({
         limit: 1000,
+        types: 'public_channel,private_channel',
         exclude_archived: true
       })
     );
