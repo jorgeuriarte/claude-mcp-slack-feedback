@@ -23,16 +23,6 @@ oauth_config:
       - mpim:history
 
 settings:
-  # Event subscriptions are OPTIONAL - only needed for webhook mode
-  # For polling mode (default), you can skip this entirely
-  # If you want webhooks, you'll need to enable this later in app settings
-  # after getting the tunnel URL from the MCP server
-  event_subscriptions:
-    is_enabled: false
-      
-  interactivity:
-    is_enabled: false
-    
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false
