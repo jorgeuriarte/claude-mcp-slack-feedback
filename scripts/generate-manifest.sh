@@ -34,14 +34,17 @@ features:
 oauth_config:
   scopes:
     bot:
-      - channels:write
+      - channels:manage
       - chat:write
       - channels:read
       - users:read
       - users:read.email
       - channels:history
+      - groups:read
       - groups:history
+      - im:read
       - im:history
+      - mpim:read
       - mpim:history
 
 settings:

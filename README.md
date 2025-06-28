@@ -78,14 +78,17 @@ The installer will:
 2. **Configure OAuth Scopes:**
    
    Under "OAuth & Permissions", add these Bot Token Scopes:
-   - `channels:write` - Create channels
+   - `channels:manage` - Create and manage channels
    - `chat:write` - Send messages
    - `channels:read` - List channels
    - `users:read` - Get user info
    - `users:read.email` - Match by email
    - `channels:history` - Read channel messages
+   - `groups:read` - Access private channels
    - `groups:history` - Read private channel messages
+   - `im:read` - Access direct messages
    - `im:history` - Read direct messages
+   - `mpim:read` - Access group direct messages
    - `mpim:history` - Read group direct messages
 
 3. **Optional: Configure Event Subscriptions (for webhooks):**
