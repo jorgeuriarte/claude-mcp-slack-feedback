@@ -16,6 +16,7 @@ export interface Session {
   userId: string;
   channelId: string;
   channelName?: string; // Store the channel name for display
+  sessionLabel?: string; // Custom label for the session
   port: number;
   createdAt: Date;
   lastActivity: Date;

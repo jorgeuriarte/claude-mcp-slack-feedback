@@ -163,6 +163,20 @@ class SlackFeedbackMCPServer {
             properties: {},
           },
         },
+        {
+          name: 'set_session_label',
+          description: 'Set a custom label for the current session to help identify it in Slack',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              label: {
+                type: 'string',
+                description: 'Custom label for the session (e.g., "Frontend Dev", "API Testing")',
+              },
+            },
+            required: ['label'],
+          },
+        },
       ],
     }));
 
@@ -194,6 +208,9 @@ class SlackFeedbackMCPServer {
           
           case 'list_channels':
             return await this.listChannels();
+          
+          case 'set_session_label':
+            return await this.setSessionLabel(args as { label: string });
           
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
@@ -377,7 +394,7 @@ class SlackFeedbackMCPServer {
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.2.1'
+      version: '1.3.0'
     };
     const buildTime = new Date().toISOString();
     
@@ -385,7 +402,7 @@ class SlackFeedbackMCPServer {
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.2.1:\n- Bot now attempts to auto-join public channels\n- Better error messages when bot is not channel member\n- Added channels:join scope to manifest\n\n✨ v1.2.0:\n- Select specific channels with set_channel\n- List available channels\n- Session remembers selected channel`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.0:\n- Visual session identification with emojis and labels\n- New set_session_label tool for custom naming\n- Rich Slack blocks formatting\n- Each session has unique emoji and display name\n\n✨ v1.2.1:\n- Bot attempts to auto-join public channels\n- Better error messages when not channel member`,
         },
       ],
     };
@@ -465,6 +482,28 @@ class SlackFeedbackMCPServer {
         {
           type: 'text',
           text: `Available channels:\n\n${channelList}\n\nUse 'set_channel' to select one.`,
+        },
+      ],
+    };
+  }
+
+  private async setSessionLabel(params: { label: string }) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    await this.sessionManager.updateSession(session.sessionId, {
+      sessionLabel: params.label
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Session label set to: "${params.label}"\n\nThis label will appear in all Slack messages from this session.`,
         },
       ],
     };

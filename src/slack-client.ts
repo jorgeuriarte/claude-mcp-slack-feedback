@@ -142,7 +142,15 @@ export class SlackClient {
       throw new Error('No active session');
     }
 
-    let message = `**Question from Claude:**\n${request.question}`;
+    // Get user info for better identification
+    const user = this.configManager.getUsers().find((u: UserConfig) => u.userId === session.userId);
+    const sessionEmoji = this.getSessionEmoji(session.sessionId);
+    
+    let message = `${sessionEmoji} **Question from Claude [Session: ${session.sessionId}]**\n`;
+    if (user?.username) {
+      message += `👤 _User: ${user.username}_\n\n`;
+    }
+    message += request.question;
     
     if (request.context) {
       message += `\n\n**Context:**\n${request.context}`;
@@ -157,11 +165,68 @@ export class SlackClient {
 
     message += '\n\n_Please reply in this thread_';
 
+    // Create Slack blocks for better formatting
+    const sessionDisplay = session.sessionLabel ? 
+      `${session.sessionLabel} (${session.sessionId})` : 
+      session.sessionId;
+      
+    const blocks: any[] = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${sessionEmoji} *Question from Claude*\n*Session:* ${sessionDisplay}${user?.username ? `\n*User:* ${user.username}` : ''}`
+        }
+      },
+      {
+        type: "divider"
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: request.question
+        }
+      }
+    ];
+
+    if (request.context) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Context:*\n${request.context}`
+        }
+      });
+    }
+
+    if (request.options && request.options.length > 0) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Suggested responses:*\n${request.options.map((opt, i) => `${i + 1}. ${opt}`).join('\n')}`
+        }
+      });
+    }
+
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "_Please reply in this thread_"
+        }
+      ]
+    });
+
     const result = await this.retryWithBackoff(() =>
       this.client!.chat.postMessage({
         channel: session.channelId,
-        text: message,
-        mrkdwn: true
+        text: message, // Fallback text
+        blocks,
+        username: `Claude Session ${session.sessionId}`,
+        icon_emoji: sessionEmoji
       })
     );
 
@@ -169,6 +234,20 @@ export class SlackClient {
     this.lastMessageTs.set(session.sessionId, result.ts!);
 
     return result.ts!;
+  }
+
+  private getSessionEmoji(sessionId: string): string {
+    // Generate consistent emoji based on session ID
+    const emojis = ['🤖', '🎭', '🎨', '🎯', '🎪', '🎭', '🎨', '🎯', '🎪', '🎲'];
+    const index = sessionId.charCodeAt(0) % emojis.length;
+    return emojis[index];
+  }
+
+  private getSessionColor(sessionId: string): string {
+    // Generate consistent color based on session ID
+    const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#48DBFB', '#FF9FF3', '#54A0FF'];
+    const index = sessionId.charCodeAt(0) % colors.length;
+    return colors[index];
   }
 
   async updateProgress(message: string, threadTs: string): Promise<void> {
@@ -181,12 +260,19 @@ export class SlackClient {
       throw new Error('No active session');
     }
 
+    const sessionEmoji = this.getSessionEmoji(session.sessionId);
+    const sessionDisplay = session.sessionLabel ? 
+      `${session.sessionLabel} (${session.sessionId})` : 
+      session.sessionId;
+
     await this.retryWithBackoff(() =>
       this.client!.chat.postMessage({
         channel: session.channelId,
-        text: `**Progress Update:**\n${message}`,
+        text: `${sessionEmoji} **Progress Update [Session: ${sessionDisplay}]:**\n${message}`,
         thread_ts: threadTs,
-        mrkdwn: true
+        mrkdwn: true,
+        username: `Claude Session ${sessionDisplay}`,
+        icon_emoji: sessionEmoji
       })
     );
   }

@@ -78,6 +78,10 @@ export class ConfigManager {
     return undefined;
   }
 
+  getUsers(): UserConfig[] {
+    return this.config.users;
+  }
+
   async addUser(user: UserConfig): Promise<void> {
     const existing = this.config.users.findIndex(u => u.userId === user.userId);
     if (existing >= 0) {
