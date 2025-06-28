@@ -133,6 +133,36 @@ class SlackFeedbackMCPServer {
             properties: {},
           },
         },
+        {
+          name: 'get_version',
+          description: 'Get MCP server version and build time',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'set_channel',
+          description: 'Set the Slack channel for the current session',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              channel: {
+                type: 'string',
+                description: 'Channel name (without #) or channel ID',
+              },
+            },
+            required: ['channel'],
+          },
+        },
+        {
+          name: 'list_channels',
+          description: 'List available Slack channels',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
       ],
     }));
 
@@ -156,6 +186,15 @@ class SlackFeedbackMCPServer {
           case 'list_sessions':
             return await this.listSessions();
           
+          case 'get_version':
+            return await this.getVersion();
+          
+          case 'set_channel':
+            return await this.setChannel(args as { channel: string });
+          
+          case 'list_channels':
+            return await this.listChannels();
+          
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -173,7 +212,7 @@ class SlackFeedbackMCPServer {
 
   private async setupSlackConfig(params: MCPToolParams['setupSlackConfig']) {
     try {
-      const { workspaceUrl, teamId } = await this.slackClient.setToken(params.botToken);
+      const { workspaceUrl, teamId } = await this.slackClient.setToken(params.botToken, params.workspaceUrl);
       
       return {
         content: [
@@ -199,6 +238,18 @@ class SlackFeedbackMCPServer {
       throw new McpError(ErrorCode.InternalError, 'No active session');
     }
 
+    // Check if channel is set for this session
+    if (!session.channelId || session.channelId === '') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `⚠️ No channel selected for this session!\n\nPlease first:\n1. Use 'list_channels' to see available channels\n2. Use 'set_channel' to select a channel\n\nExample: set_channel with channel "general"`,
+          },
+        ],
+      };
+    }
+
     const request: FeedbackRequest = {
       sessionId: session.sessionId,
       question: params.question,
@@ -209,7 +260,10 @@ class SlackFeedbackMCPServer {
 
     const threadTs = await this.slackClient.sendFeedback(request);
     
-    let responseText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${session.channelId}\nThread: ${threadTs}\nMode: ${session.mode}`;
+    // Get channel name if we don't have it
+    const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
+    
+    let responseText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${channelName}\nThread: ${threadTs}\nMode: ${session.mode}`;
     
     if (session.mode === 'webhook' && session.tunnelUrl) {
       responseText += `\n\n🔗 Webhook URL ready for real-time responses!`;
@@ -320,6 +374,91 @@ class SlackFeedbackMCPServer {
     };
   }
 
+  private async getVersion() {
+    const packageJson = {
+      name: 'claude-mcp-slack-feedback',
+      version: '1.2.0'
+    };
+    const buildTime = new Date().toISOString();
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.2.0:\n- Select specific channels with set_channel\n- List available channels\n- Session remembers selected channel\n- No more auto-created channels`,
+        },
+      ],
+    };
+  }
+
+  private async setChannel(params: { channel: string }) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Handle channel name with or without #
+    let channelName = params.channel.replace(/^#/, '');
+    
+    // Try to find the channel
+    const channelId = await this.slackClient.findChannel(channelName);
+    if (!channelId) {
+      throw new McpError(ErrorCode.InvalidParams, `Channel #${channelName} not found`);
+    }
+
+    // Update session with channel
+    await this.sessionManager.updateSessionChannel(session.sessionId, channelId);
+    
+    // Store channel name for display
+    const channelInfo = await this.slackClient.getChannelInfo(channelId);
+    await this.sessionManager.updateSession(session.sessionId, {
+      channelName: channelInfo.name
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Channel set to #${channelInfo.name}\n\nAll feedback for this session will be sent to this channel.`,
+        },
+      ],
+    };
+  }
+
+  private async listChannels() {
+    if (!this.slackClient.isConfigured()) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Slack not configured');
+    }
+
+    const channels = await this.slackClient.listChannels();
+    
+    if (channels.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'No channels found. Make sure the bot has access to channels.',
+          },
+        ],
+      };
+    }
+
+    const channelList = channels
+      .map(ch => `• #${ch.name} ${ch.is_member ? '(bot is member)' : ''}`)
+      .join('\n');
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Available channels:\n\n${channelList}\n\nUse 'set_channel' to select one.`,
+        },
+      ],
+    };
+  }
+
   private async ensureSession(): Promise<void> {
     if (!this.slackClient.isConfigured()) {
       throw new McpError(
@@ -335,10 +474,7 @@ class SlackFeedbackMCPServer {
       const user = await this.slackClient.detectUser();
       session = await this.sessionManager.createSession(user);
       
-      // Create session channel
-      const channelName = this.sessionManager.getChannelName(user.username, session.sessionId);
-      const channel = await this.slackClient.createChannel(channelName);
-      await this.sessionManager.updateSessionChannel(session.sessionId, channel.id);
+      // Don't create a channel automatically - user must select one
       
       // Try to setup webhook with cloudflared
       try {

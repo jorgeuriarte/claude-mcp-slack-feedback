@@ -21,7 +21,8 @@ export class SessionManager {
   }
 
   generateSessionId(): string {
-    return randomBytes(8).toString('hex');
+    // Generate shorter session IDs (6 chars) for Slack channel name limits
+    return randomBytes(3).toString('hex');
   }
 
   private async findAvailablePort(): Promise<number> {
@@ -94,6 +95,10 @@ export class SessionManager {
     });
   }
 
+  async updateSession(sessionId: string, updates: Partial<Session>): Promise<void> {
+    await this.configManager.updateSession(sessionId, updates);
+  }
+
   async updateSessionWebhook(sessionId: string, webhookUrl: string, tunnelUrl: string): Promise<void> {
     await this.configManager.updateSession(sessionId, {
       webhookUrl,
@@ -133,7 +138,10 @@ export class SessionManager {
   }
 
   getChannelName(username: string, sessionId: string): string {
-    return `claude-${username}-${sessionId}`;
+    // Ensure channel name is under 21 chars (Slack limit)
+    // Format: claude-user-123abc
+    const shortUsername = username.substring(0, 4);
+    return `claude-${shortUsername}-${sessionId}`;
   }
 
   getMainChannelName(username: string): string {

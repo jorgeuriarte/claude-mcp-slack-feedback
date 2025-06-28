@@ -10,6 +10,7 @@ export class SlackClient {
   private responseQueue: Map<string, FeedbackResponse[]> = new Map();
   private rateLimitRetries = 3;
   private rateLimitDelay = 1000;
+  private lastMessageTs: Map<string, string> = new Map(); // Track last message timestamp per session
 
   constructor(configManager: ConfigManager, sessionManager: SessionManager) {
     this.configManager = configManager;
@@ -27,7 +28,7 @@ export class SlackClient {
     return !!this.client;
   }
 
-  async setToken(botToken: string): Promise<{ workspaceUrl: string; teamId: string }> {
+  async setToken(botToken: string, workspaceUrl: string): Promise<{ workspaceUrl: string; teamId: string }> {
     this.client = new WebClient(botToken);
     
     // Test the token and get workspace info
@@ -36,11 +37,6 @@ export class SlackClient {
       throw new Error('Invalid bot token');
     }
 
-    const teamInfo = await this.retryWithBackoff(() => 
-      this.client!.team.info({ team: auth.team_id })
-    );
-
-    const workspaceUrl = `${teamInfo.team?.domain}.slack.com`;
     const teamId = auth.team_id!;
 
     await this.configManager.setSlackConfig({
@@ -127,7 +123,7 @@ export class SlackClient {
         const list = await this.retryWithBackoff(() =>
           this.client!.conversations.list()
         );
-        const existing = list.channels?.find(c => c.name === name);
+        const existing = list.channels?.find(c => c.name === name.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
         if (existing) {
           return { id: existing.id!, name: existing.name! };
         }
@@ -159,6 +155,8 @@ export class SlackClient {
       });
     }
 
+    message += '\n\n_Please reply in this thread_';
+
     const result = await this.retryWithBackoff(() =>
       this.client!.chat.postMessage({
         channel: session.channelId,
@@ -166,6 +164,9 @@ export class SlackClient {
         mrkdwn: true
       })
     );
+
+    // Store the message timestamp for this session
+    this.lastMessageTs.set(session.sessionId, result.ts!);
 
     return result.ts!;
   }
@@ -200,31 +201,89 @@ export class SlackClient {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    const oldest = since ? (since / 1000).toString() : '0';
-    
-    const history = await this.retryWithBackoff(() =>
-      this.client!.conversations.history({
-        channel: session.channelId,
-        oldest,
-        limit: 100
-      })
-    );
-
     const responses: FeedbackResponse[] = [];
+    const botUserId = (await this.client.auth.test()).user_id;
     
-    for (const msg of history.messages || []) {
-      if (msg.user && msg.user !== (await this.client.auth.test()).user_id) {
-        responses.push({
-          sessionId,
-          response: msg.text || '',
-          timestamp: parseFloat(msg.ts!) * 1000,
-          userId: msg.user,
-          threadTs: msg.thread_ts || msg.ts!
-        });
+    // Get the last message timestamp for this session
+    const lastMessageTs = this.lastMessageTs.get(sessionId);
+    
+    if (!lastMessageTs) {
+      // If no message has been sent yet, check channel history
+      const oldest = since ? (since / 1000).toString() : '0';
+      const history = await this.retryWithBackoff(() =>
+        this.client!.conversations.history({
+          channel: session.channelId,
+          oldest,
+          limit: 100
+        })
+      );
+
+      for (const msg of history.messages || []) {
+        if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+          responses.push({
+            sessionId,
+            response: msg.text || '',
+            timestamp: parseFloat(msg.ts!) * 1000,
+            userId: msg.user,
+            threadTs: msg.thread_ts || msg.ts!
+          });
+        }
+      }
+    } else {
+      // Check for thread replies to our last message
+      try {
+        const replies = await this.retryWithBackoff(() =>
+          this.client!.conversations.replies({
+            channel: session.channelId,
+            ts: lastMessageTs,
+            limit: 100
+          })
+        );
+
+        // Skip the first message (which is our question)
+        const threadMessages = replies.messages?.slice(1) || [];
+        
+        for (const msg of threadMessages) {
+          if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+            // Only include messages we haven't seen
+            if (!since || parseFloat(msg.ts!) * 1000 > since) {
+              responses.push({
+                sessionId,
+                response: msg.text || '',
+                timestamp: parseFloat(msg.ts!) * 1000,
+                userId: msg.user,
+                threadTs: lastMessageTs
+              });
+            }
+          }
+        }
+      } catch (error: any) {
+        // If thread_not_found, fall back to channel history
+        if (error.error === 'thread_not_found') {
+          return this.pollMessages(sessionId, since);
+        }
+        throw error;
       }
     }
 
     return responses;
+  }
+
+  async getChannelInfo(channelId: string): Promise<{ id: string; name: string }> {
+    if (!this.client) {
+      throw new Error('Slack client not configured');
+    }
+
+    const info = await this.retryWithBackoff(() =>
+      this.client!.conversations.info({
+        channel: channelId
+      })
+    );
+
+    return {
+      id: channelId,
+      name: info.channel?.name || channelId
+    };
   }
 
   addWebhookResponse(response: FeedbackResponse): void {
@@ -237,6 +296,52 @@ export class SlackClient {
     const responses = this.responseQueue.get(sessionId) || [];
     this.responseQueue.set(sessionId, []); // Clear after reading
     return responses;
+  }
+
+  async findChannel(channelName: string): Promise<string | undefined> {
+    if (!this.client) {
+      throw new Error('Slack client not configured');
+    }
+
+    // First try with exact name match
+    const list = await this.retryWithBackoff(() =>
+      this.client!.conversations.list({
+        limit: 1000
+      })
+    );
+
+    // Try exact match first
+    let channel = list.channels?.find(c => c.name === channelName);
+    
+    // If not found, try case-insensitive match
+    if (!channel) {
+      channel = list.channels?.find(c => 
+        c.name?.toLowerCase() === channelName.toLowerCase()
+      );
+    }
+
+    return channel?.id;
+  }
+
+  async listChannels(): Promise<Array<{ name: string; is_member: boolean }>> {
+    if (!this.client) {
+      throw new Error('Slack client not configured');
+    }
+
+    const list = await this.retryWithBackoff(() =>
+      this.client!.conversations.list({
+        limit: 1000,
+        exclude_archived: true
+      })
+    );
+
+    return (list.channels || [])
+      .filter(c => c.name && !c.is_archived)
+      .map(c => ({
+        name: c.name!,
+        is_member: c.is_member || false
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private async retryWithBackoff<T>(
