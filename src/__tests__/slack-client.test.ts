@@ -199,6 +199,15 @@ describe('SlackClient', () => {
         mode: 'webhook'
       });
       
+      mockConfigManager.getUsers.mockReturnValue([
+        {
+          userId: 'U123',
+          username: 'testuser',
+          email: 'test@example.com',
+          mainChannelId: 'C456'
+        }
+      ]);
+      
       mockWebClient.chat.postMessage.mockResolvedValue({
         ok: true,
         ts: '1234567890.123456'
@@ -217,7 +226,7 @@ describe('SlackClient', () => {
         expect.objectContaining({
           channel: 'C123',
           text: expect.stringContaining('Test question?'),
-          mrkdwn: true
+          blocks: expect.any(Array)
         })
       );
     });
