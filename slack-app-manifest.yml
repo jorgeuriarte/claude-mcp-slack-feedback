@@ -24,8 +24,9 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    # The request URL will be set dynamically by the MCP server when using webhook mode
-    # For initial setup, you can leave this empty or use a placeholder
+    # IMPORTANT: Leave request_url empty for now
+    # The webhook URL will be provided by the MCP server after starting a session
+    # You'll need to update this in your Slack app settings when using webhook mode
     request_url: ""
     bot_events:
       - message.channels

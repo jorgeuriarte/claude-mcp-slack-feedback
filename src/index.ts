@@ -209,11 +209,24 @@ class SlackFeedbackMCPServer {
 
     const threadTs = await this.slackClient.sendFeedback(request);
     
+    let responseText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${session.channelId}\nThread: ${threadTs}\nMode: ${session.mode}`;
+    
+    if (session.mode === 'webhook' && session.tunnelUrl) {
+      responseText += `\n\n🔗 Webhook URL: ${session.tunnelUrl}/slack/events`;
+      responseText += `\n\n⚠️ To enable real-time responses:`;
+      responseText += `\n1. Go to your Slack app settings`;
+      responseText += `\n2. Enable Event Subscriptions`;
+      responseText += `\n3. Set Request URL to: ${session.tunnelUrl}/slack/events`;
+      responseText += `\n4. Save changes`;
+    }
+    
+    responseText += `\n\nUse get_responses to retrieve the answer.`;
+    
     return {
       content: [
         {
           type: 'text',
-          text: `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${session.channelId}\nThread: ${threadTs}\nMode: ${session.mode}\n\nUse get_responses to retrieve the answer.`,
+          text: responseText,
         },
       ],
     };
