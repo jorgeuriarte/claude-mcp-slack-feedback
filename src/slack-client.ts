@@ -483,8 +483,13 @@ export class SlackClient {
     } catch (error: any) {
       if (error.error === 'rate_limited' && retries > 0) {
         const retryAfter = error.retryAfter || this.rateLimitDelay / 1000;
+        console.log(`[SlackClient] Rate limited, retrying after ${retryAfter}s (${retries} retries left)`);
         await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
         return this.retryWithBackoff(operation, retries - 1);
+      }
+      // Add rate limit info to error for upstream handling
+      if (error.error === 'rate_limited') {
+        error.retryAfter = error.retryAfter || 60;
       }
       throw error;
     }

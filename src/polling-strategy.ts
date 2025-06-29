@@ -12,6 +12,9 @@ export interface PollingResult {
 export class PollingStrategy {
   private readonly fibonacciSequence = [2, 3, 5, 8, 13, 21, 34, 55]; // seconds
   private readonly longPollingInterval = 60; // seconds after fibonacci
+  private readonly minPollingInterval = 3; // minimum seconds between API calls to respect rate limits
+  private lastApiCallTime = 0;
+  private rateLimitRetryAfter = 0;
   private readonly negativePatterns = [
     /^(no|wait|stop|espera|para|alto)$/i,
     /^(cancel|cancelar|abortar|abort)$/i,
@@ -50,15 +53,30 @@ export class PollingStrategy {
     while (true) {
       // Check for responses
       console.log(`[PollingStrategy] Feedback polling attempt ${attemptCount + 1}, checking for messages since ${new Date(lastCheckTime).toLocaleTimeString()}`);
-      const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
       
-      if (responses.length > 0) {
-        console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
-        return {
-          responses,
-          shouldStop: false,
-          requiresFeedback: false
-        };
+      try {
+        // Ensure we respect rate limits
+        await this.ensureRateLimit();
+        
+        const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        
+        if (responses.length > 0) {
+          console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
+          return {
+            responses,
+            shouldStop: false,
+            requiresFeedback: false
+          };
+        }
+      } catch (error: any) {
+        if (error.message?.includes('rate_limited')) {
+          // Extract retry-after from error if available
+          const retryAfter = error.retryAfter || 60;
+          this.handleRateLimit(retryAfter);
+          // Continue loop, will wait on next iteration
+          continue;
+        }
+        throw error; // Re-throw non-rate-limit errors
       }
 
       // Determine wait time
@@ -110,9 +128,14 @@ export class PollingStrategy {
       
       // Check for responses
       console.log(`[PollingStrategy] Checking for courtesy responses since ${new Date(lastCheckTime).toLocaleTimeString()}`);
-      const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
       
-      if (responses.length > 0) {
+      try {
+        // Ensure we respect rate limits
+        await this.ensureRateLimit();
+        
+        const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        
+        if (responses.length > 0) {
         console.log(`[PollingStrategy] Found ${responses.length} responses in courtesy mode`);
         // Check if any response is negative/blocking
         const hasNegativeResponse = responses.some(r => 
@@ -135,6 +158,17 @@ export class PollingStrategy {
           shouldStop: false,
           requiresFeedback: false
         };
+      }
+      } catch (error: any) {
+        if (error.message?.includes('rate_limited')) {
+          // Extract retry-after from error if available
+          const retryAfter = error.retryAfter || 60;
+          this.handleRateLimit(retryAfter);
+          // Skip this iteration and continue
+          fibIndex++;
+          continue;
+        }
+        throw error; // Re-throw non-rate-limit errors
       }
 
       lastCheckTime = Date.now();
@@ -180,6 +214,38 @@ export class PollingStrategy {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Ensure we respect rate limits before making API calls
+   */
+  private async ensureRateLimit(): Promise<void> {
+    const now = Date.now();
+    
+    // Check if we're in a rate limit retry period
+    if (this.rateLimitRetryAfter > now) {
+      const waitTime = this.rateLimitRetryAfter - now;
+      console.log(`[PollingStrategy] Rate limited, waiting ${Math.ceil(waitTime / 1000)}s before next API call`);
+      await this.sleep(waitTime);
+    }
+    
+    // Ensure minimum time between API calls
+    const timeSinceLastCall = now - this.lastApiCallTime;
+    if (timeSinceLastCall < this.minPollingInterval * 1000) {
+      const waitTime = (this.minPollingInterval * 1000) - timeSinceLastCall;
+      console.log(`[PollingStrategy] Throttling API calls, waiting ${Math.ceil(waitTime / 1000)}s`);
+      await this.sleep(waitTime);
+    }
+    
+    this.lastApiCallTime = Date.now();
+  }
+
+  /**
+   * Handle rate limit errors from Slack
+   */
+  handleRateLimit(retryAfter: number): void {
+    this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
+    console.log(`[PollingStrategy] Rate limit hit, will retry after ${retryAfter}s`);
   }
 
   /**
