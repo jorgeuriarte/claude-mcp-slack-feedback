@@ -10,9 +10,9 @@ export interface PollingResult {
 }
 
 export class PollingStrategy {
-  private readonly fibonacciSequence = [2, 3, 5, 8, 13, 21, 34, 55]; // seconds
+  private readonly fibonacciSequence = [5, 8, 13, 21, 34, 55]; // seconds - start at 5s to avoid rate limits
   private readonly longPollingInterval = 60; // seconds after fibonacci
-  private readonly minPollingInterval = 3; // minimum seconds between API calls to respect rate limits
+  private readonly minPollingInterval = 10; // minimum seconds between API calls to respect rate limits
   private lastApiCallTime = 0;
   private rateLimitRetryAfter = 0;
   private readonly negativePatterns = [
@@ -69,11 +69,14 @@ export class PollingStrategy {
           };
         }
       } catch (error: any) {
-        if (error.message?.includes('rate_limited')) {
+        if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
           // Extract retry-after from error if available
           const retryAfter = error.retryAfter || 60;
           this.handleRateLimit(retryAfter);
-          // Continue loop, will wait on next iteration
+          console.log(`[PollingStrategy] Rate limit hit, pausing polling for ${retryAfter}s`);
+          // Wait immediately to respect rate limit
+          await this.sleep(retryAfter * 1000);
+          // Continue loop after waiting
           continue;
         }
         throw error; // Re-throw non-rate-limit errors
@@ -160,10 +163,13 @@ export class PollingStrategy {
         };
       }
       } catch (error: any) {
-        if (error.message?.includes('rate_limited')) {
+        if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
           // Extract retry-after from error if available
           const retryAfter = error.retryAfter || 60;
           this.handleRateLimit(retryAfter);
+          console.log(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
+          // Wait for rate limit to clear
+          await this.sleep(retryAfter * 1000);
           // Skip this iteration and continue
           fibIndex++;
           continue;
