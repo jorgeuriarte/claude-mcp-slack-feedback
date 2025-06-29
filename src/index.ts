@@ -13,6 +13,7 @@ import { SessionManager } from './session-manager.js';
 import { SlackClient } from './slack-client.js';
 import { TunnelManager } from './tunnel-manager.js';
 import { WebhookServer } from './webhook-server.js';
+import { PollingStrategy } from './polling-strategy.js';
 import { MCPToolParams, FeedbackRequest } from './types.js';
 import { config } from 'dotenv';
 
@@ -69,7 +70,7 @@ class SlackFeedbackMCPServer {
         },
         {
           name: 'ask_feedback',
-          description: 'Send a question to Slack for human feedback',
+          description: 'Send a question to Slack for human feedback (waits for response)',
           inputSchema: {
             type: 'object',
             properties: {
@@ -88,6 +89,24 @@ class SlackFeedbackMCPServer {
               },
             },
             required: ['question'],
+          },
+        },
+        {
+          name: 'inform_slack',
+          description: 'Send an informational message to Slack (no response required)',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              message: {
+                type: 'string',
+                description: 'The informational message to send',
+              },
+              context: {
+                type: 'string',
+                description: 'Optional additional context',
+              },
+            },
+            required: ['message'],
           },
         },
         {
@@ -204,6 +223,9 @@ class SlackFeedbackMCPServer {
           
           case 'ask_feedback':
             return await this.askFeedback(args as MCPToolParams['askFeedback']);
+          
+          case 'inform_slack':
+            return await this.informSlack(args as MCPToolParams['informSlack']);
           
           case 'update_progress':
             return await this.updateProgress(args as MCPToolParams['updateProgress']);
@@ -325,27 +347,142 @@ class SlackFeedbackMCPServer {
     // Get channel name if we don't have it
     const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
     
-    let responseText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${channelName}\nThread: ${threadTs}\nMode: ${session.mode}`;
+    let statusText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${channelName}\nThread: ${threadTs}\nMode: ${session.mode}`;
     
+    // For webhook mode, add configuration info
     if (session.mode === 'webhook' && session.tunnelUrl) {
-      responseText += `\n\n🔗 Webhook URL ready for real-time responses!`;
-      responseText += `\n${session.tunnelUrl}/slack/events`;
-      responseText += `\n\n📋 Quick setup (one-time only):`;
-      responseText += `\n1. Open: https://api.slack.com/apps (your app)`;
-      responseText += `\n2. Go to "Event Subscriptions" → Enable Events`;
-      responseText += `\n3. Paste URL above in "Request URL" → Wait for ✓`;
-      responseText += `\n4. Add bot events: message.channels, message.groups`;
-      responseText += `\n5. Save Changes`;
-      responseText += `\n\n✨ Or just wait 1-2 seconds for polling (no setup needed)`;
+      statusText += `\n\n🔗 Webhook configured: ${session.tunnelUrl}/slack/events`;
     }
     
-    responseText += `\n\nUse get_responses to retrieve the answer.`;
+    statusText += `\n\n⏳ Waiting for response...`;
+
+    // Start polling for feedback (required mode)
+    const pollingStrategy = PollingStrategy.createFeedbackRequired(
+      this.slackClient,
+      session.sessionId
+    );
+    
+    const result = await pollingStrategy.execute(threadTs);
+    
+    if (result.shouldStop) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: '❌ Feedback collection interrupted.',
+          },
+        ],
+      };
+    }
+    
+    // Format responses
+    const responseText = result.responses.map(r => 
+      `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`
+    ).join('\n');
+    
+    // Send confirmation
+    if (result.responses.length > 0 && result.responses[0].threadTs) {
+      try {
+        const firstResponse = result.responses[0];
+        const summary = firstResponse.response.substring(0, 100) + 
+                       (firstResponse.response.length > 100 ? '...' : '');
+        await this.slackClient.updateProgress(
+          `✅ Recibido: "${summary}". Procesando...`,
+          firstResponse.threadTs
+        );
+      } catch (error) {
+        console.error('Failed to send confirmation:', error);
+      }
+    }
     
     return {
       content: [
         {
           type: 'text',
-          text: responseText,
+          text: `${statusText}\n\n💬 Responses received:\n${responseText}`,
+        },
+      ],
+    };
+  }
+
+  private async informSlack(params: MCPToolParams['informSlack']) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Check if channel is set
+    if (!session.channelId || session.channelId === '') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `⚠️ No channel selected! Use 'set_channel' first.`,
+          },
+        ],
+      };
+    }
+
+    // Send informational message
+    const request: FeedbackRequest = {
+      sessionId: session.sessionId,
+      question: `ℹ️ ${params.message}`,
+      context: params.context,
+      timestamp: Date.now()
+    };
+
+    const threadTs = await this.slackClient.sendFeedback(request);
+    
+    // Get channel name
+    const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
+    
+    let statusText = `✅ Information sent to Slack!\n\nChannel: #${channelName}\nThread: ${threadTs}`;
+    
+    // Start courtesy polling
+    const pollingStrategy = PollingStrategy.createCourtesyInform(
+      this.slackClient,
+      session.sessionId
+    );
+    
+    const result = await pollingStrategy.execute(threadTs);
+    
+    if (result.requiresFeedback) {
+      // User sent a negative response, switch to feedback mode
+      const feedbackText = result.responses.map(r => r.response).join(', ');
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${statusText}\n\n⚠️ User response indicates they want to provide feedback: "${feedbackText}"\n\nPlease use 'ask_feedback' to understand their concerns.`,
+          },
+        ],
+      };
+    }
+    
+    if (result.responses.length > 0) {
+      const responseText = result.responses.map(r => 
+        `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`
+      ).join('\n');
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${statusText}\n\n💬 Acknowledgment received:\n${responseText}`,
+          },
+        ],
+      };
+    }
+    
+    // No response after courtesy polling - continue with work
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${statusText}\n\n✅ No response received. Continuing with tasks.`,
         },
       ],
     };

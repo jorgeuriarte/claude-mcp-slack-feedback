@@ -61,6 +61,10 @@ export interface MCPToolParams {
     context?: string;
     options?: string[];
   };
+  informSlack: {
+    message: string;
+    context?: string;
+  };
   updateProgress: {
     message: string;
     threadTs: string;
