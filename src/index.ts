@@ -356,6 +356,8 @@ class SlackFeedbackMCPServer {
     
     statusText += `\n\n⏳ Waiting for response...`;
 
+    console.log(`[askFeedback] Starting feedback polling for session ${session.sessionId}`);
+
     // Start polling for feedback (required mode)
     const pollingStrategy = PollingStrategy.createFeedbackRequired(
       this.slackClient,
@@ -363,6 +365,8 @@ class SlackFeedbackMCPServer {
     );
     
     const result = await pollingStrategy.execute(threadTs);
+    
+    console.log(`[askFeedback] Polling completed with ${result.responses.length} responses`);
     
     if (result.shouldStop) {
       return {

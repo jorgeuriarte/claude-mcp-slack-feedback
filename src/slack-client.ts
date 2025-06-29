@@ -294,6 +294,8 @@ export class SlackClient {
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    console.log(`[SlackClient] Polling messages for session ${sessionId}, channel ${session.channelId}, since ${since ? new Date(since).toLocaleTimeString() : 'beginning'}`);
+
     const responses: FeedbackResponse[] = [];
     const botUserId = (await this.client.auth.test()).user_id;
     
@@ -325,6 +327,7 @@ export class SlackClient {
     } else {
       // Check for thread replies to our last message
       try {
+        console.log(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
         const replies = await this.retryWithBackoff(() =>
           this.client!.conversations.replies({
             channel: session.channelId,
@@ -335,6 +338,7 @@ export class SlackClient {
 
         // Skip the first message (which is our question)
         const threadMessages = replies.messages?.slice(1) || [];
+        console.log(`[SlackClient] Found ${threadMessages.length} messages in thread`);
         
         for (const msg of threadMessages) {
           if (msg.user && msg.user !== botUserId && !msg.bot_id) {

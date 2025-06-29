@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(git add:*)",
+      "Bash(ls:*)",
+      "Bash(git commit:*)",
+      "Bash(npm install:*)",
+      "Bash(claude-mcp-slack-feedback --version)",
+      "Bash(cat:*)",
+      "Bash(npm run dev:*)",
+      "Bash(/Volumes/DevelopmentProjects/Claude/ClaudeCodeSlackMCP/bin/claude-mcp-slack-feedback:*)",
+      "Bash(cloudflared:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": []
+  }
+}

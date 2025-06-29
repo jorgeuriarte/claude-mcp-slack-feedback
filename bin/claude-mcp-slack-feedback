@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+
+// Run the MCP server directly
+import('../dist/index.js');
