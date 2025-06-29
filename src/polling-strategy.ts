@@ -73,10 +73,16 @@ export class PollingStrategy {
           // Extract retry-after from error if available
           const retryAfter = error.retryAfter || 60;
           this.handleRateLimit(retryAfter);
-          console.log(`[PollingStrategy] Rate limit hit, pausing polling for ${retryAfter}s`);
-          // Wait immediately to respect rate limit
+          console.log(`[PollingStrategy] Rate limit hit, waiting ${retryAfter}s before next attempt`);
+          // Notify user about rate limit
+          await this.sendRateLimitMessage(threadTs);
+          // Wait for rate limit period
           await this.sleep(retryAfter * 1000);
-          // Continue loop after waiting
+          // Reset to longer intervals to be more conservative
+          if (fibIndex < this.fibonacciSequence.length - 2) {
+            fibIndex = this.fibonacciSequence.length - 2; // Jump to 34s interval
+          }
+          // Continue polling after rate limit wait
           continue;
         }
         throw error; // Re-throw non-rate-limit errors
@@ -170,8 +176,8 @@ export class PollingStrategy {
           console.log(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
           // Wait for rate limit to clear
           await this.sleep(retryAfter * 1000);
-          // Skip this iteration and continue
-          fibIndex++;
+          // Continue with remaining attempts but skip to end of sequence
+          fibIndex = Math.min(fibIndex + 2, this.fibonacciSequence.length - 1);
           continue;
         }
         throw error; // Re-throw non-rate-limit errors
@@ -252,6 +258,23 @@ export class PollingStrategy {
   handleRateLimit(retryAfter: number): void {
     this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
     console.log(`[PollingStrategy] Rate limit hit, will retry after ${retryAfter}s`);
+  }
+
+  /**
+   * Send a rate limit message to the user
+   */
+  private async sendRateLimitMessage(threadTs?: string): Promise<void> {
+    if (!threadTs) return;
+    
+    try {
+      await this.slackClient.updateProgress(
+        "⚠️ Alcancé el límite de consultas de Slack. Esperaré un minuto antes de continuar verificando respuestas...",
+        threadTs
+      );
+    } catch (error) {
+      // Ignore errors when sending rate limit message
+      console.log(`[PollingStrategy] Could not send rate limit message: ${error}`);
+    }
   }
 
   /**
