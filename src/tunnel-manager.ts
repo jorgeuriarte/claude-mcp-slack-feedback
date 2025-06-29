@@ -38,6 +38,13 @@ export class TunnelManager {
       this.tunnelProcess.stderr?.on('data', (data) => {
         errorOutput += data.toString();
         console.error('Cloudflared stderr:', data.toString());
+        
+        // Cloudflared outputs the URL to stderr, not stdout
+        const urlMatch = errorOutput.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+        if (urlMatch && !this.tunnelUrl) {
+          this.tunnelUrl = urlMatch[0];
+          resolve(this.tunnelUrl);
+        }
       });
 
       this.tunnelProcess.on('error', (error) => {
