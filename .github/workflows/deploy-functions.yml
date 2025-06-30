@@ -55,8 +55,8 @@ jobs:
         # Copy built files to deployment directory
         cp -r dist deploy/functions/
         
-        # Use the ultra-simple HTTP server for now
-        cp deploy/functions/simple-http.js deploy/functions/index.js
+        # Use the Cloud Functions wrapper
+        cp deploy/functions/index-simple.js deploy/functions/index.js
         
         # Create a simplified package.json without build script
         node -e "

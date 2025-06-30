@@ -5,7 +5,7 @@
  */
 
 import { http } from '@google-cloud/functions-framework';
-import app from './mcp-wrapper.js';
+import app from './simple-http.js';
 
-// Export the Express app as the Cloud Function
+// Register the function with the correct name
 http('mcp', app);
