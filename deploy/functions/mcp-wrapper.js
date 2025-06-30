@@ -6,8 +6,6 @@
  */
 
 import express from 'express';
-import { ConfigManager } from './dist/config-manager.js';
-import { SlackClient } from './dist/slack-client.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
