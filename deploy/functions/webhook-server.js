@@ -248,10 +248,17 @@ function verifySlackSignature(req, signature, timestamp) {
     .update(sigBasestring, 'utf8')
     .digest('hex');
   
-  return crypto.timingSafeEqual(
-    Buffer.from(mySignature, 'utf8'),
-    Buffer.from(signature, 'utf8')
-  );
+  // Compare signatures
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(mySignature, 'utf8'),
+      Buffer.from(signature, 'utf8')
+    );
+  } catch (error) {
+    // If lengths don't match, signatures are different
+    console.error('Signature comparison failed:', error.message);
+    return false;
+  }
 }
 
 // Register the function
