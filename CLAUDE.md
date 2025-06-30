@@ -108,3 +108,6 @@ Follow the 6-phase implementation plan from the specification:
 ## Development Best Practices
 
 - Siempre que sea posible introduce pruebas y ejecutalas para validar que los pasos que vas dando quedan consolidados.
+
+## Additional Notes
+- Este MCP es para claude Code, *no para Claude Desktop*
