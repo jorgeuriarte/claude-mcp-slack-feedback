@@ -5,6 +5,7 @@ export class WebhookServer {
     port;
     slackClient;
     sessionId;
+    feedbackResolvers = new Map();
     constructor(port, sessionId, slackClient) {
         this.port = port;
         this.sessionId = sessionId;
@@ -48,6 +49,10 @@ export class WebhookServer {
                             threadTs: payload.message?.ts || ''
                         };
                         this.slackClient.addWebhookResponse(response);
+                        // If there's a resolver waiting for this response, resolve it
+                        if (payload.message?.ts) {
+                            this.resolveFeedback(this.sessionId, payload.message.ts, response);
+                        }
                     }
                 }
             }
@@ -68,6 +73,10 @@ export class WebhookServer {
                 threadTs: event.thread_ts || event.ts || ''
             };
             this.slackClient.addWebhookResponse(response);
+            // If there's a resolver waiting for this response, resolve it
+            if (event.thread_ts) {
+                this.resolveFeedback(this.sessionId, event.thread_ts, response);
+            }
         }
     }
     async start() {
@@ -104,6 +113,25 @@ export class WebhookServer {
     }
     getPort() {
         return this.port;
+    }
+    setFeedbackResolver(sessionId, threadTs, resolver) {
+        const key = `${sessionId}:${threadTs}`;
+        this.feedbackResolvers.set(key, resolver);
+        console.log(`[WebhookServer] Set feedback resolver for ${key}`);
+    }
+    clearFeedbackResolver(sessionId, threadTs) {
+        const key = `${sessionId}:${threadTs}`;
+        this.feedbackResolvers.delete(key);
+        console.log(`[WebhookServer] Cleared feedback resolver for ${key}`);
+    }
+    resolveFeedback(sessionId, threadTs, response) {
+        const key = `${sessionId}:${threadTs}`;
+        const resolver = this.feedbackResolvers.get(key);
+        if (resolver) {
+            resolver(response);
+            this.feedbackResolvers.delete(key);
+            console.log(`[WebhookServer] Resolved feedback for ${key}`);
+        }
     }
 }
 //# sourceMappingURL=webhook-server.js.map

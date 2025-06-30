@@ -22,7 +22,19 @@ export interface Session {
     status: 'active' | 'expired';
     webhookUrl?: string;
     tunnelUrl?: string;
-    mode: 'webhook' | 'polling';
+    mode: 'webhook' | 'polling' | 'hybrid';
+    pollingConfig?: {
+        autoStart: boolean;
+        initialDelay?: number;
+        normalInterval?: number;
+        idleInterval?: number;
+        maxInterval?: number;
+    };
+    hybridConfig?: {
+        webhookTimeout: number;
+        fallbackAfterFailures: number;
+        healthCheckInterval: number;
+    };
 }
 export interface FeedbackRequest {
     sessionId: string;

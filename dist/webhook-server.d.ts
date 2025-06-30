@@ -5,6 +5,7 @@ export declare class WebhookServer {
     private port;
     private slackClient;
     private sessionId;
+    private feedbackResolvers;
     constructor(port: number, sessionId: string, slackClient: SlackClient);
     private setupRoutes;
     private handleSlackEvent;
@@ -12,5 +13,8 @@ export declare class WebhookServer {
     stop(): Promise<void>;
     isRunning(): boolean;
     getPort(): number;
+    setFeedbackResolver(sessionId: string, threadTs: string, resolver: (response: any) => void): void;
+    clearFeedbackResolver(sessionId: string, threadTs: string): void;
+    private resolveFeedback;
 }
 //# sourceMappingURL=webhook-server.d.ts.map

@@ -358,57 +358,150 @@ class SlackFeedbackMCPServer {
     
     statusText += `\n\n⏳ Waiting for response...`;
 
-    console.log(`[askFeedback] Starting feedback polling for session ${session.sessionId}`);
+    console.log(`[askFeedback] Starting feedback collection for session ${session.sessionId} in ${session.mode} mode`);
 
-    // Start polling for feedback (required mode)
-    const pollingStrategy = PollingStrategy.createFeedbackRequired(
-      this.slackClient,
-      session.sessionId
-    );
-    
-    const result = await pollingStrategy.execute(threadTs);
-    
-    console.log(`[askFeedback] Polling completed with ${result.responses.length} responses`);
-    
-    if (result.shouldStop) {
+    // Hybrid mode implementation
+    if (session.mode === 'hybrid' && session.tunnelUrl) {
+      // Set up both webhook and polling strategies
+      const pollingStrategy = PollingStrategy.createFeedbackRequired(
+        this.slackClient,
+        session.sessionId
+      );
+      
+      const webhookTimeout = session.hybridConfig?.webhookTimeout || 5000;
+      
+      // Create a promise that resolves when webhook receives a response
+      const webhookPromise = new Promise<any>((resolve) => {
+        // Store resolver for webhook callback
+        this.webhookServer?.setFeedbackResolver(session.sessionId, threadTs, resolve);
+        
+        // Timeout for webhook
+        setTimeout(() => {
+          this.webhookServer?.clearFeedbackResolver(session.sessionId, threadTs);
+          resolve(null); // Timeout reached
+        }, webhookTimeout);
+      });
+      
+      // Start polling after a short delay
+      const pollingPromise = new Promise<any>(async (resolve) => {
+        await new Promise(resolve => setTimeout(resolve, webhookTimeout / 2)); // Wait half the webhook timeout
+        const result = await pollingStrategy.execute(threadTs);
+        resolve(result);
+      });
+      
+      // Race between webhook and polling
+      console.log(`[askFeedback] Hybrid mode: racing webhook (${webhookTimeout}ms timeout) vs polling`);
+      const winner = await Promise.race([
+        webhookPromise.then(r => r ? { source: 'webhook', result: r } : null),
+        pollingPromise.then(r => ({ source: 'polling', result: r }))
+      ]);
+      
+      // Clean up webhook resolver if still pending
+      this.webhookServer?.clearFeedbackResolver(session.sessionId, threadTs);
+      
+      if (winner && winner.source === 'webhook') {
+        console.log(`[askFeedback] Webhook responded first`);
+        const result = winner.result;
+        
+        // Record success for health monitoring
+        this.sessionManager.recordWebhookSuccess(session.sessionId);
+        
+        // Record activity for polling manager
+        this.sessionManager.recordPollingActivity(session.sessionId);
+        
+        // Return webhook response format (adapt as needed)
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `✅ Feedback received via webhook!\n\n${result.response}`,
+            },
+          ],
+        };
+      } else {
+        // Webhook failed or timed out
+        if (!winner || winner.source === 'polling') {
+          this.sessionManager.recordWebhookFailure(session.sessionId);
+        }
+        console.log(`[askFeedback] Polling completed (webhook ${winner ? 'timed out' : 'not available'})`);
+        const result = winner?.result || await pollingStrategy.execute(threadTs);
+        
+        if (result.shouldStop) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: '❌ Feedback collection interrupted.',
+              },
+            ],
+          };
+        }
+        
+        // Format responses
+        const responseText = result.responses.map((r: any) => 
+          `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`
+        ).join('\n');
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `✅ Feedback received${session.mode === 'hybrid' ? ' (via polling)' : ''}:\n\n${responseText}`,
+            },
+          ],
+        };
+      }
+    } else {
+      // Standard polling mode
+      const pollingStrategy = PollingStrategy.createFeedbackRequired(
+        this.slackClient,
+        session.sessionId
+      );
+      
+      const result = await pollingStrategy.execute(threadTs);
+      
+      console.log(`[askFeedback] Polling completed with ${result.responses.length} responses`);
+      
+      if (result.shouldStop) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '❌ Feedback collection interrupted.',
+            },
+          ],
+        };
+      }
+      
+      // Format responses
+      const responseText = result.responses.map(r => 
+        `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`
+      ).join('\n');
+      
+      // Send confirmation
+      if (result.responses.length > 0 && result.responses[0].threadTs) {
+        try {
+          const firstResponse = result.responses[0];
+          const summary = firstResponse.response.substring(0, 100) + 
+                         (firstResponse.response.length > 100 ? '...' : '');
+          await this.slackClient.updateProgress(
+            `✅ Recibido: "${summary}". Procesando...`,
+            firstResponse.threadTs
+          );
+        } catch (error) {
+          console.error('Failed to send confirmation:', error);
+        }
+      }
+      
       return {
         content: [
           {
             type: 'text',
-            text: '❌ Feedback collection interrupted.',
+            text: `${statusText}\n\n💬 Responses received:\n${responseText}`,
           },
         ],
       };
     }
-    
-    // Format responses
-    const responseText = result.responses.map(r => 
-      `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`
-    ).join('\n');
-    
-    // Send confirmation
-    if (result.responses.length > 0 && result.responses[0].threadTs) {
-      try {
-        const firstResponse = result.responses[0];
-        const summary = firstResponse.response.substring(0, 100) + 
-                       (firstResponse.response.length > 100 ? '...' : '');
-        await this.slackClient.updateProgress(
-          `✅ Recibido: "${summary}". Procesando...`,
-          firstResponse.threadTs
-        );
-      } catch (error) {
-        console.error('Failed to send confirmation:', error);
-      }
-    }
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `${statusText}\n\n💬 Responses received:\n${responseText}`,
-        },
-      ],
-    };
   }
 
   private async informSlack(params: MCPToolParams['informSlack']) {
@@ -763,15 +856,20 @@ class SlackFeedbackMCPServer {
         // Try to setup webhook with cloudflared
         try {
           await this.setupWebhook(session.sessionId, session.port);
-          console.log(`[Session ${session.sessionId}] Webhook mode enabled with cloudflared`);
+          await this.sessionManager.setSessionMode(session.sessionId, 'hybrid');
+          
+          // Start health monitoring for hybrid mode
+          this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
+          
+          console.log(`[Session ${session.sessionId}] Hybrid mode enabled (webhook + polling backup with health monitoring)`);
         } catch (error) {
           console.error('Failed to setup webhook, falling back to polling:', error);
-          await this.sessionManager.setSessionPollingMode(session.sessionId);
+          await this.sessionManager.setSessionMode(session.sessionId, 'polling');
           console.log(`[Session ${session.sessionId}] Using polling mode (webhook setup failed)`);
         }
       } else {
         // cloudflared not available, use polling mode
-        await this.sessionManager.setSessionPollingMode(session.sessionId);
+        await this.sessionManager.setSessionMode(session.sessionId, 'polling');
         console.log(`[Session ${session.sessionId}] Using polling mode (cloudflared not available)`);
       }
     }

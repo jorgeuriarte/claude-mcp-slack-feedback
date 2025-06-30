@@ -24,6 +24,7 @@ export class WebhookServer {
   private port: number;
   private slackClient: SlackClient;
   private sessionId: string;
+  private feedbackResolvers: Map<string, (response: any) => void> = new Map();
 
   constructor(port: number, sessionId: string, slackClient: SlackClient) {
     this.port = port;
@@ -78,6 +79,11 @@ export class WebhookServer {
             };
             
             this.slackClient.addWebhookResponse(response);
+            
+            // If there's a resolver waiting for this response, resolve it
+            if (payload.message?.ts) {
+              this.resolveFeedback(this.sessionId, payload.message.ts, response);
+            }
           }
         }
       } catch (error) {
@@ -100,6 +106,11 @@ export class WebhookServer {
       };
       
       this.slackClient.addWebhookResponse(response);
+      
+      // If there's a resolver waiting for this response, resolve it
+      if (event.thread_ts) {
+        this.resolveFeedback(this.sessionId, event.thread_ts, response);
+      }
     }
   }
 
@@ -139,5 +150,27 @@ export class WebhookServer {
 
   getPort(): number {
     return this.port;
+  }
+
+  setFeedbackResolver(sessionId: string, threadTs: string, resolver: (response: any) => void): void {
+    const key = `${sessionId}:${threadTs}`;
+    this.feedbackResolvers.set(key, resolver);
+    console.log(`[WebhookServer] Set feedback resolver for ${key}`);
+  }
+
+  clearFeedbackResolver(sessionId: string, threadTs: string): void {
+    const key = `${sessionId}:${threadTs}`;
+    this.feedbackResolvers.delete(key);
+    console.log(`[WebhookServer] Cleared feedback resolver for ${key}`);
+  }
+
+  private resolveFeedback(sessionId: string, threadTs: string, response: any): void {
+    const key = `${sessionId}:${threadTs}`;
+    const resolver = this.feedbackResolvers.get(key);
+    if (resolver) {
+      resolver(response);
+      this.feedbackResolvers.delete(key);
+      console.log(`[WebhookServer] Resolved feedback for ${key}`);
+    }
   }
 }

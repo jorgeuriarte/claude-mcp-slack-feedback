@@ -1,11 +1,15 @@
 import { randomBytes } from 'crypto';
 import { Session, UserConfig } from './types.js';
 import { ConfigManager } from './config-manager.js';
+import { PollingManager } from './polling-manager.js';
+import { HealthMonitor } from './health-monitor.js';
 
 export class SessionManager {
   private configManager: ConfigManager;
   private currentSessionId?: string;
   private usedPorts: Set<number> = new Set();
+  private pollingManagers: Map<string, PollingManager> = new Map();
+  private healthMonitors: Map<string, HealthMonitor> = new Map();
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -38,7 +42,7 @@ export class SessionManager {
     throw new Error('No available ports in range 3000-4000');
   }
 
-  async createSession(user: UserConfig): Promise<Session> {
+  async createSession(user: UserConfig, mode: 'webhook' | 'polling' | 'hybrid' = 'hybrid'): Promise<Session> {
     const sessionId = this.generateSessionId();
     const port = await this.findAvailablePort();
     
@@ -50,7 +54,19 @@ export class SessionManager {
       createdAt: new Date(),
       lastActivity: new Date(),
       status: 'active',
-      mode: 'webhook' // Default to webhook, fallback to polling if needed
+      mode,
+      pollingConfig: {
+        autoStart: mode === 'polling' || mode === 'hybrid',
+        initialDelay: 2000,
+        normalInterval: 5000,
+        idleInterval: 30000,
+        maxInterval: 60000
+      },
+      hybridConfig: {
+        webhookTimeout: 5000,
+        fallbackAfterFailures: 3,
+        healthCheckInterval: 300000 // 5 minutes
+      }
     };
 
     this.usedPorts.add(port);
@@ -172,5 +188,124 @@ export class SessionManager {
     
     // Fallback to last directory name
     return pathParts[pathParts.length - 1] || 'workspace';
+  }
+
+  // Polling Manager methods
+  createPollingManager(session: Session, pollCallback: () => Promise<void>): PollingManager {
+    const manager = new PollingManager(session, pollCallback, session.pollingConfig);
+    this.pollingManagers.set(session.sessionId, manager);
+    return manager;
+  }
+
+  getPollingManager(sessionId: string): PollingManager | undefined {
+    return this.pollingManagers.get(sessionId);
+  }
+
+  async startPolling(sessionId: string, pollCallback: () => Promise<void>): Promise<void> {
+    const session = await this.configManager.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    let manager = this.pollingManagers.get(sessionId);
+    if (!manager) {
+      manager = this.createPollingManager(session, pollCallback);
+    }
+
+    manager.startPolling();
+    console.log(`[SessionManager] Started polling for session ${sessionId}`);
+  }
+
+  stopPolling(sessionId: string): void {
+    const manager = this.pollingManagers.get(sessionId);
+    if (manager) {
+      manager.stopPolling();
+      console.log(`[SessionManager] Stopped polling for session ${sessionId}`);
+    }
+  }
+
+  recordPollingActivity(sessionId: string): void {
+    const manager = this.pollingManagers.get(sessionId);
+    if (manager) {
+      manager.recordActivity();
+    }
+  }
+
+  async setSessionMode(sessionId: string, mode: 'webhook' | 'polling' | 'hybrid'): Promise<void> {
+    await this.configManager.updateSession(sessionId, { mode });
+    
+    // Update polling based on new mode
+    if (mode === 'webhook') {
+      this.stopPolling(sessionId);
+    } else if (mode === 'polling' || mode === 'hybrid') {
+      const session = await this.configManager.getSession(sessionId);
+      if (session?.pollingConfig?.autoStart) {
+        // Will be started by the caller with appropriate callback
+        console.log(`[SessionManager] Mode set to ${mode}, polling will be started by caller`);
+      }
+    }
+  }
+
+  async cleanupSession(sessionId: string): Promise<void> {
+    // Stop polling if active
+    this.stopPolling(sessionId);
+    
+    // Stop health monitoring
+    this.stopHealthMonitoring(sessionId);
+    
+    // Remove managers
+    this.pollingManagers.delete(sessionId);
+    this.healthMonitors.delete(sessionId);
+    
+    // End session
+    await this.endSession(sessionId);
+  }
+
+  // Health Monitor methods
+  createHealthMonitor(session: Session, webhookServer?: any): HealthMonitor {
+    const monitor = new HealthMonitor(session, this, webhookServer);
+    this.healthMonitors.set(session.sessionId, monitor);
+    return monitor;
+  }
+
+  getHealthMonitor(sessionId: string): HealthMonitor | undefined {
+    return this.healthMonitors.get(sessionId);
+  }
+
+  startHealthMonitoring(sessionId: string, webhookServer?: any): void {
+    const session = this.configManager.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    let monitor = this.healthMonitors.get(sessionId);
+    if (!monitor) {
+      monitor = this.createHealthMonitor(session, webhookServer);
+    }
+
+    monitor.startMonitoring();
+    console.log(`[SessionManager] Started health monitoring for session ${sessionId}`);
+  }
+
+  stopHealthMonitoring(sessionId: string): void {
+    const monitor = this.healthMonitors.get(sessionId);
+    if (monitor) {
+      monitor.stopMonitoring();
+      console.log(`[SessionManager] Stopped health monitoring for session ${sessionId}`);
+    }
+  }
+
+  recordWebhookFailure(sessionId: string): void {
+    const monitor = this.healthMonitors.get(sessionId);
+    if (monitor) {
+      monitor.recordWebhookFailure(sessionId);
+    }
+  }
+
+  recordWebhookSuccess(sessionId: string): void {
+    const monitor = this.healthMonitors.get(sessionId);
+    if (monitor) {
+      monitor.recordWebhookSuccess(sessionId);
+    }
   }
 }

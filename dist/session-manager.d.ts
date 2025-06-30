@@ -1,14 +1,18 @@
 import { Session, UserConfig } from './types.js';
 import { ConfigManager } from './config-manager.js';
+import { PollingManager } from './polling-manager.js';
+import { HealthMonitor } from './health-monitor.js';
 export declare class SessionManager {
     private configManager;
     private currentSessionId?;
     private usedPorts;
+    private pollingManagers;
+    private healthMonitors;
     constructor(configManager: ConfigManager);
     init(): Promise<void>;
     generateSessionId(): string;
     private findAvailablePort;
-    createSession(user: UserConfig): Promise<Session>;
+    createSession(user: UserConfig, mode?: 'webhook' | 'polling' | 'hybrid'): Promise<Session>;
     getCurrentSession(): Promise<Session | undefined>;
     setCurrentSession(sessionId: string): Promise<void>;
     updateSessionActivity(sessionId: string): Promise<void>;
@@ -22,5 +26,18 @@ export declare class SessionManager {
     getChannelName(username: string, sessionId: string): string;
     getMainChannelName(username: string): string;
     static extractSessionLabelFromPath(): string;
+    createPollingManager(session: Session, pollCallback: () => Promise<void>): PollingManager;
+    getPollingManager(sessionId: string): PollingManager | undefined;
+    startPolling(sessionId: string, pollCallback: () => Promise<void>): Promise<void>;
+    stopPolling(sessionId: string): void;
+    recordPollingActivity(sessionId: string): void;
+    setSessionMode(sessionId: string, mode: 'webhook' | 'polling' | 'hybrid'): Promise<void>;
+    cleanupSession(sessionId: string): Promise<void>;
+    createHealthMonitor(session: Session, webhookServer?: any): HealthMonitor;
+    getHealthMonitor(sessionId: string): HealthMonitor | undefined;
+    startHealthMonitoring(sessionId: string, webhookServer?: any): void;
+    stopHealthMonitoring(sessionId: string): void;
+    recordWebhookFailure(sessionId: string): void;
+    recordWebhookSuccess(sessionId: string): void;
 }
 //# sourceMappingURL=session-manager.d.ts.map
