@@ -5,8 +5,8 @@ A Model Context Protocol (MCP) server that enables Claude Code to request human 
 ## Features
 
 - 🔄 **Real-time feedback**: Ask questions and get responses from your team via Slack
-- 🌐 **Webhook support**: Uses cloudflared tunnels for instant responses
-- 📊 **Polling fallback**: Works even without webhooks
+- 🌐 **Webhook support**: Optional cloudflared tunnels for instant responses
+- 📊 **Polling mode**: Default mode that works without any additional dependencies
 - 👥 **Multi-user support**: Multiple developers can use simultaneously
 - 🔀 **Multi-session support**: Handle multiple Claude sessions per user
 - 🚀 **Zero-configuration**: Auto-detects users and creates channels
@@ -23,9 +23,9 @@ cd claude-mcp-slack-feedback
 
 The installer will:
 - Check Node.js version (18+ required)
-- Optionally install cloudflared for webhook support
 - Build the project
 - Configure Claude Desktop automatically
+- Optionally suggest installing cloudflared for webhook support
 
 ### Manual Installation
 

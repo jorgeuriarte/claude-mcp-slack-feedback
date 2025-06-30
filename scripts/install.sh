@@ -55,14 +55,18 @@ check_cloudflared() {
     
     print_warning "cloudflared is not installed"
     echo
-    read -p "Would you like to install cloudflared? (y/n) " -n 1 -r
+    echo "cloudflared enables webhook mode for instant responses."
+    echo "Without it, the MCP server will use polling mode (checks every few seconds)."
+    echo
+    read -p "Would you like to install cloudflared for webhook support? (y/n) " -n 1 -r
     echo
     
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         install_cloudflared
     else
-        print_warning "Skipping cloudflared installation"
-        print_warning "The MCP server will use polling mode instead of webhooks"
+        print_success "Skipping cloudflared installation"
+        print_warning "The MCP server will use polling mode by default"
+        echo "You can install cloudflared later if you want webhook support."
     fi
 }
 
@@ -209,8 +213,13 @@ main() {
     echo "4. In Claude, configure your token:"
     echo "   setup_slack_config with bot token \"xoxb-your-token-here\""
     echo
-    echo "The bot will use polling mode by default (no webhook configuration needed)."
-    echo "For webhook mode setup, see the README.md file."
+    if command -v cloudflared &> /dev/null; then
+        echo "cloudflared is installed - webhook mode will be attempted automatically."
+        echo "If webhook setup fails, the bot will fall back to polling mode."
+    else
+        echo "The bot will use polling mode (no cloudflared detected)."
+        echo "This works perfectly fine, responses are checked every few seconds."
+    fi
 }
 
 # Run main function

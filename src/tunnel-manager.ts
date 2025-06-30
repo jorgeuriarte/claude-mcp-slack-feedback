@@ -14,6 +14,12 @@ export class TunnelManager {
       throw new Error('Tunnel already running');
     }
 
+    // Check if cloudflared is available before trying to start
+    const isInstalled = await this.checkCloudflaredInstalled();
+    if (!isInstalled) {
+      throw new Error('cloudflared is not installed. Please install it to use webhook mode, or use polling mode instead.');
+    }
+
     return new Promise((resolve, reject) => {
       const args = ['tunnel', '--url', `http://localhost:${this.port}`];
       
@@ -114,41 +120,28 @@ export class TunnelManager {
     }
   }
 
-  async installCloudflared(): Promise<void> {
-    const platform = process.platform;
-    const arch = process.arch;
-    
-    if (platform === 'darwin') {
-      // macOS - use Homebrew if available
-      const brewProcess = spawn('brew', ['install', 'cloudflare/cloudflare/cloudflared'], {
-        stdio: 'inherit'
+  static async isAvailable(): Promise<boolean> {
+    try {
+      const checkProcess = spawn('cloudflared', ['--version'], {
+        stdio: 'ignore'
       });
       
-      return new Promise((resolve, reject) => {
-        brewProcess.on('error', () => {
-          reject(new Error('Homebrew not found. Please install cloudflared manually.'));
-        });
-        
-        brewProcess.on('exit', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`Failed to install cloudflared via Homebrew (exit code ${code})`));
-          }
-        });
+      return new Promise((resolve) => {
+        checkProcess.on('error', () => resolve(false));
+        checkProcess.on('exit', (code) => resolve(code === 0));
       });
-    } else if (platform === 'linux') {
-      // Linux - download binary
-      const downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}`;
-      const installPath = '/usr/local/bin/cloudflared';
-      
-      throw new Error(
-        `Please install cloudflared manually:\n` +
-        `sudo wget -O ${installPath} ${downloadUrl}\n` +
-        `sudo chmod +x ${installPath}`
-      );
-    } else {
-      throw new Error('Unsupported platform. Please install cloudflared manually.');
+    } catch {
+      return false;
     }
+  }
+
+  async installCloudflared(): Promise<void> {
+    // This method is deprecated as cloudflared is now optional
+    throw new Error(
+      'cloudflared is optional. To use webhook mode, please install it manually:\n' +
+      '- macOS: brew install cloudflare/cloudflare/cloudflared\n' +
+      '- Linux: Download from https://github.com/cloudflare/cloudflared/releases\n' +
+      '\nOr use polling mode which doesn\'t require cloudflared.'
+    );
   }
 }

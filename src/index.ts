@@ -352,6 +352,8 @@ class SlackFeedbackMCPServer {
     // For webhook mode, add configuration info
     if (session.mode === 'webhook' && session.tunnelUrl) {
       statusText += `\n\n🔗 Webhook configured: ${session.tunnelUrl}/slack/events`;
+    } else if (session.mode === 'polling') {
+      statusText += `\n\n🔄 Using polling mode (checking for responses every few seconds)`;
     }
     
     statusText += `\n\n⏳ Waiting for response...`;
@@ -596,7 +598,7 @@ class SlackFeedbackMCPServer {
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.3.0'
+      version: '1.3.1'
     };
     const buildTime = new Date().toISOString();
     
@@ -604,7 +606,7 @@ class SlackFeedbackMCPServer {
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.0:\n- Visual session identification with emojis and labels\n- New set_session_label tool for custom naming\n- Rich Slack blocks formatting\n- Each session has unique emoji and display name\n\n✨ v1.2.1:\n- Bot attempts to auto-join public channels\n- Better error messages when not channel member`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.1:\n- cloudflared is now optional (defaults to polling mode)\n- Automatic detection of cloudflared availability\n- Improved fallback to polling when webhook setup fails\n\n✨ v1.3.0:\n- Visual session identification with emojis and labels\n- New set_session_label tool for custom naming\n- Rich Slack blocks formatting\n\n✨ v1.2.1:\n- Bot attempts to auto-join public channels\n- Better error messages when not channel member`,
         },
       ],
     };
@@ -754,26 +756,32 @@ class SlackFeedbackMCPServer {
       
       // Don't create a channel automatically - user must select one
       
-      // Try to setup webhook with cloudflared
-      try {
-        await this.setupWebhook(session.sessionId, session.port);
-      } catch (error) {
-        console.error('Failed to setup webhook, falling back to polling:', error);
+      // Default to polling mode unless cloudflared is available
+      const cloudflaredAvailable = await TunnelManager.isAvailable();
+      
+      if (cloudflaredAvailable) {
+        // Try to setup webhook with cloudflared
+        try {
+          await this.setupWebhook(session.sessionId, session.port);
+          console.log(`[Session ${session.sessionId}] Webhook mode enabled with cloudflared`);
+        } catch (error) {
+          console.error('Failed to setup webhook, falling back to polling:', error);
+          await this.sessionManager.setSessionPollingMode(session.sessionId);
+          console.log(`[Session ${session.sessionId}] Using polling mode (webhook setup failed)`);
+        }
+      } else {
+        // cloudflared not available, use polling mode
         await this.sessionManager.setSessionPollingMode(session.sessionId);
+        console.log(`[Session ${session.sessionId}] Using polling mode (cloudflared not available)`);
       }
     }
   }
 
   private async setupWebhook(sessionId: string, port: number): Promise<void> {
-    // Check if cloudflared is installed
+    // Initialize tunnel manager
     this.tunnelManager = new TunnelManager(port);
-    const isInstalled = await this.tunnelManager.checkCloudflaredInstalled();
     
-    if (!isInstalled) {
-      throw new Error('cloudflared not installed. Install it or use polling mode.');
-    }
-
-    // Start tunnel
+    // Start tunnel (will throw if cloudflared not available)
     const tunnelUrl = await this.tunnelManager.start();
     
     // Start webhook server

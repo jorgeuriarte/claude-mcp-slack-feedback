@@ -6,22 +6,28 @@ This MCP server supports two modes for receiving Slack responses:
 
 **How it works:**
 - The server periodically checks Slack for new messages
-- No external configuration needed
+- No external dependencies required
 - Works behind firewalls and NAT
-- Slight delay in receiving responses (poll interval)
+- Responses are checked every few seconds
 
 **Best for:**
 - Production environments
 - Corporate networks
 - Quick testing without setup
+- When cloudflared is not available
 
-## Webhook Mode
+## Webhook Mode (Optional)
 
 **How it works:**
 - Slack sends events directly to your server in real-time
-- Requires a public URL (provided by cloudflared tunnel)
+- Requires cloudflared to be installed (optional dependency)
+- Provides a public URL via cloudflared tunnel
 - Instant response delivery
 - More efficient for high-volume usage
+
+**Requirements:**
+- cloudflared must be installed (`brew install cloudflare/cloudflare/cloudflared` on macOS)
+- The server will automatically detect if cloudflared is available
 
 **Best for:**
 - Development and testing
@@ -30,39 +36,51 @@ This MCP server supports two modes for receiving Slack responses:
 
 ### Setting up Webhook Mode
 
-1. **Automatic tunnel creation:**
-   When you first use `ask_feedback`, if cloudflared is installed, the system automatically:
-   - Starts a local webhook server
-   - Creates a secure tunnel via cloudflared
-   - Provides you with a public URL
-
-2. **Configure Slack:**
-   The webhook URL changes each session. When you see:
+1. **Install cloudflared (optional):**
+   ```bash
+   # macOS
+   brew install cloudflare/cloudflare/cloudflared
+   
+   # Linux - see https://github.com/cloudflare/cloudflared/releases
    ```
-   🔗 Webhook URL: https://abc123.trycloudflare.com/slack/events
+
+2. **Automatic mode detection:**
+   When you first use `ask_feedback`, the system automatically:
+   - Checks if cloudflared is available
+   - If yes: Sets up webhook mode with tunnel
+   - If no: Uses polling mode (no action needed)
+
+3. **Configure Slack (only if using webhook mode):**
+   If webhook mode is active, you'll see:
+   ```
+   🔗 Webhook configured: https://abc123.trycloudflare.com/slack/events
    ```
    
-   You need to:
+   To enable real-time events:
    - Go to your Slack app settings (https://api.slack.com/apps)
    - Navigate to "Event Subscriptions"
    - Enable events
    - Paste the webhook URL in "Request URL"
    - Wait for verification (should be instant)
    - Save changes
+   
+   **Note:** This step is optional. The system works fine with polling mode.
 
-3. **Limitations:**
+4. **Limitations of webhook mode:**
    - URL changes every session
    - Requires manual Slack configuration update
    - Tunnel stops when the MCP server stops
+   - Requires cloudflared to be installed
 
 ### Choosing the Right Mode
 
-| Feature | Polling | Webhook |
-|---------|---------|---------|
-| Setup complexity | None | Requires Slack config |
-| Response speed | ~1-5 seconds | Instant |
+| Feature | Polling (Default) | Webhook (Optional) |
+|---------|-------------------|-------------------|
+| Setup complexity | None | Requires cloudflared + Slack config |
+| Response speed | ~2-5 seconds | Instant |
 | Reliability | Very high | Depends on tunnel |
 | Works behind firewall | Yes | Yes (via tunnel) |
+| External dependencies | None | cloudflared |
 | Production ready | Yes | No (URLs change) |
 
 ### Future Improvements
