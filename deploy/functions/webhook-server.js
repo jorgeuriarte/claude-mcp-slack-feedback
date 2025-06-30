@@ -187,11 +187,26 @@ app.delete('/responses/:sessionId', (req, res) => {
   });
 });
 
+// Store thread starters for session extraction
+const threadStarters = new Map();
+
 // Helper function to handle Slack messages
-function handleSlackMessage(event) {
+async function handleSlackMessage(event) {
   console.log('Processing Slack message event:', JSON.stringify(event, null, 2));
   
   const threadTs = event.thread_ts;
+  
+  // Store thread starters
+  if (event.ts === event.thread_ts && event.bot_id) {
+    // This is a thread starter from Claude
+    // Extract session ID from the message text
+    const sessionMatch = event.text?.match(/\[Session:\s*([^\]]+)\]/i);
+    if (sessionMatch) {
+      const sessionId = sessionMatch[1].trim();
+      threadStarters.set(threadTs, sessionId);
+      console.log(`Stored thread starter ${threadTs} with session ID ${sessionId}`);
+    }
+  }
   
   // Skip bot messages and thread starters
   if (event.bot_id || event.ts === event.thread_ts) {
@@ -199,15 +214,75 @@ function handleSlackMessage(event) {
     return;
   }
   
-  // For now, use channel ID as key since we don't have channel name
-  // We'll map known channels to sessions
-  const channelToSession = {
-    'C093FLV2MK7': 'main', // claude-jorge-main
-    'C093FU0CXC5': 'feedback', // claude-feedback
-    'C093HQMJUUS': '3300b7437a1e0199' // claude-jorge-3300b7437a1e0199
-  };
+  // Try to extract session ID from the stored thread starters
+  let sessionId = threadStarters.get(threadTs);
   
-  const sessionId = channelToSession[event.channel] || event.channel;
+  // For thread messages, we need to look at the parent message
+  if (event.thread_ts && event.ts !== event.thread_ts) {
+    if (sessionId) {
+      // We have a session ID from the thread starter
+      const key = `${sessionId}:${event.thread_ts}`;
+      const response = {
+        user: event.user,
+        text: event.text,
+        ts: event.ts,
+        threadTs: event.thread_ts,
+        channel: event.channel
+      };
+      
+      responseStore.set(key, {
+        timestamp: Date.now(),
+        response
+      });
+      
+      console.log(`Stored response under key: ${key} (extracted session ID: ${sessionId})`);
+    } else {
+      // Fallback: Use channel mapping if we don't have session ID
+      console.log('No session ID found in thread starter, using channel mapping');
+      const channelToSession = {
+        'C093FLV2MK7': 'main',
+        'C093FU0CXC5': 'feedback', 
+        'C093HQMJUUS': '3300b7437a1e0199'
+      };
+      
+      // Store under multiple keys to handle different lookup patterns
+      const sessionIds = [
+        channelToSession[event.channel], // mapped session ID
+        event.channel, // raw channel ID
+      ].filter(Boolean);
+      
+      sessionIds.forEach(sid => {
+        const key = `${sid}:${event.thread_ts}`;
+        const response = {
+          user: event.user,
+          text: event.text,
+          ts: event.ts,
+          threadTs: event.thread_ts,
+          channel: event.channel
+        };
+        
+        responseStore.set(key, {
+          timestamp: Date.now(),
+          response
+        });
+        
+        console.log(`Stored response under key: ${key}`);
+      });
+    }
+    
+    return; // Exit early since we handled storage
+  }
+  
+  // Non-thread messages (shouldn't normally happen in our use case)
+  if (!sessionId) {
+    const channelToSession = {
+      'C093FLV2MK7': 'main',
+      'C093FU0CXC5': 'feedback',
+      'C093HQMJUUS': '3300b7437a1e0199'
+    };
+    
+    sessionId = channelToSession[event.channel] || event.channel;
+  }
   
   // Store the response
   const key = `${sessionId}:${threadTs}`;

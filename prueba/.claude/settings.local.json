@@ -5,7 +5,13 @@
       "mcp__claude-mcp-slack-feedback-dev__ask_feedback",
       "mcp__claude-mcp-slack-feedback-dev__set_channel",
       "mcp__claude-mcp-slack-feedback-dev__set_session_contact",
-      "mcp__claude-mcp-slack-feedback-dev__set_session_label"
+      "mcp__claude-mcp-slack-feedback-dev__set_session_label",
+      "mcp__claude-mcp-slack-feedback-prod__setup_slack_config",
+      "mcp__claude-mcp-slack-feedback-prod__ask_feedback",
+      "mcp__claude-mcp-slack-feedback-prod__list_channels",
+      "mcp__claude-mcp-slack-feedback-prod__set_channel",
+      "mcp__claude-mcp-slack-feedback-prod__set_session_label",
+      "mcp__claude-mcp-slack-feedback-prod__set_session_contact"
     ],
     "deny": []
   }
