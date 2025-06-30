@@ -1,0 +1,44 @@
+# Source files
+src/
+*.ts
+!dist/**/*.d.ts
+
+# Development files
+.env
+.env.local
+*.log
+node_modules/
+coverage/
+.vscode/
+.idea/
+
+# Test files
+__tests__/
+*.test.js
+*.test.ts
+jest.config.js
+
+# Config files
+tsconfig.json
+.eslintrc
+.prettierrc
+
+# Git files
+.git/
+.gitignore
+
+# Documentation source
+docs/
+*.md
+!README.md
+
+# Build artifacts
+*.map
+
+# Development scripts
+scripts/
+prueba/
+claude_tools/
+
+# Don't ignore bin directory
+!bin/
