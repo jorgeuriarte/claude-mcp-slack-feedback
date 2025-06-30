@@ -66,7 +66,10 @@ jobs:
             version: pkg.version,
             type: 'module',
             main: 'index.js',
-            dependencies: pkg.dependencies,
+            dependencies: {
+              ...pkg.dependencies,
+              '@google-cloud/functions-framework': '^3.3.0'
+            },
             engines: pkg.engines
           };
           require('fs').writeFileSync('deploy/functions/package.json', JSON.stringify(deployPkg, null, 2));
