@@ -54,8 +54,20 @@ jobs:
       run: |
         # Copy built files to deployment directory
         cp -r dist deploy/functions/
-        cp package.json deploy/functions/
-        cp package-lock.json deploy/functions/
+        
+        # Create a simplified package.json without build script
+        node -e "
+          const pkg = require('./package.json');
+          const deployPkg = {
+            name: pkg.name,
+            version: pkg.version,
+            type: 'module',
+            main: 'index.js',
+            dependencies: pkg.dependencies,
+            engines: pkg.engines
+          };
+          require('fs').writeFileSync('deploy/functions/package.json', JSON.stringify(deployPkg, null, 2));
+        "
         
         # Create .gcloudignore
         cat > deploy/functions/.gcloudignore << EOF
@@ -67,6 +79,7 @@ jobs:
         *.test.ts
         .env
         .env.*
+        package-lock.json
         EOF
 
     - name: Authenticate to Google Cloud
