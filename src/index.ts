@@ -210,6 +210,71 @@ class SlackFeedbackMCPServer {
             required: ['contact'],
           },
         },
+        {
+          name: 'configure_polling',
+          description: 'Configure polling behavior for the current session',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              autoStart: {
+                type: 'boolean',
+                description: 'Start polling automatically when in polling/hybrid mode',
+              },
+              initialDelay: {
+                type: 'number',
+                description: 'Initial polling delay in milliseconds (default: 2000)',
+              },
+              normalInterval: {
+                type: 'number',
+                description: 'Normal polling interval in milliseconds (default: 5000)',
+              },
+              idleInterval: {
+                type: 'number',
+                description: 'Idle polling interval in milliseconds (default: 30000)',
+              },
+              maxInterval: {
+                type: 'number',
+                description: 'Maximum polling interval in milliseconds (default: 60000)',
+              },
+            },
+          },
+        },
+        {
+          name: 'configure_hybrid',
+          description: 'Configure hybrid mode behavior for the current session',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              webhookTimeout: {
+                type: 'number',
+                description: 'Webhook timeout in milliseconds (default: 5000)',
+              },
+              fallbackAfterFailures: {
+                type: 'number',
+                description: 'Number of failures before switching to polling (default: 3)',
+              },
+              healthCheckInterval: {
+                type: 'number',
+                description: 'Health check interval in milliseconds (default: 300000)',
+              },
+            },
+          },
+        },
+        {
+          name: 'set_session_mode',
+          description: 'Set the operation mode for the current session',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              mode: {
+                type: 'string',
+                enum: ['webhook', 'polling', 'hybrid'],
+                description: 'Operation mode: webhook (instant), polling (reliable), or hybrid (best of both)',
+              },
+            },
+            required: ['mode'],
+          },
+        },
       ],
     }));
 
@@ -250,6 +315,15 @@ class SlackFeedbackMCPServer {
           
           case 'set_session_contact':
             return await this.setSessionContact(args as { contact: string });
+          
+          case 'configure_polling':
+            return await this.configurePolling(args as any);
+          
+          case 'configure_hybrid':
+            return await this.configureHybrid(args as any);
+          
+          case 'set_session_mode':
+            return await this.setSessionMode(args as { mode: 'webhook' | 'polling' | 'hybrid' });
           
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
@@ -827,6 +901,143 @@ class SlackFeedbackMCPServer {
         {
           type: 'text',
           text: `✅ Session contact set to: ${contact}\n\nThis contact will be mentioned in all Slack messages from this session.`,
+        },
+      ],
+    };
+  }
+
+  private async configurePolling(params: Partial<{
+    autoStart: boolean;
+    initialDelay: number;
+    normalInterval: number;
+    idleInterval: number;
+    maxInterval: number;
+  }>) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Validate parameters
+    if (params.initialDelay && params.initialDelay < 100) {
+      throw new McpError(ErrorCode.InvalidParams, 'Initial delay must be at least 100ms');
+    }
+    if (params.normalInterval && params.normalInterval < 1000) {
+      throw new McpError(ErrorCode.InvalidParams, 'Normal interval must be at least 1000ms');
+    }
+
+    // Update polling config
+    const updatedConfig = {
+      ...session.pollingConfig!,
+      ...params
+    };
+
+    await this.sessionManager.updateSession(session.sessionId, {
+      pollingConfig: updatedConfig
+    });
+
+    // If polling is active, restart with new config
+    const pollingManager = this.sessionManager.getPollingManager(session.sessionId);
+    if (pollingManager && pollingManager.isActive()) {
+      this.sessionManager.stopPolling(session.sessionId);
+      // Will be restarted with new config on next feedback request
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Polling configuration updated:\n\n${JSON.stringify(updatedConfig, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async configureHybrid(params: Partial<{
+    webhookTimeout: number;
+    fallbackAfterFailures: number;
+    healthCheckInterval: number;
+  }>) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Validate parameters
+    if (params.webhookTimeout && params.webhookTimeout < 1000) {
+      throw new McpError(ErrorCode.InvalidParams, 'Webhook timeout must be at least 1000ms');
+    }
+    if (params.fallbackAfterFailures && params.fallbackAfterFailures < 1) {
+      throw new McpError(ErrorCode.InvalidParams, 'Fallback failures must be at least 1');
+    }
+    if (params.healthCheckInterval && params.healthCheckInterval < 30000) {
+      throw new McpError(ErrorCode.InvalidParams, 'Health check interval must be at least 30000ms');
+    }
+
+    // Update hybrid config
+    const updatedConfig = {
+      ...session.hybridConfig!,
+      ...params
+    };
+
+    await this.sessionManager.updateSession(session.sessionId, {
+      hybridConfig: updatedConfig
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Hybrid mode configuration updated:\n\n${JSON.stringify(updatedConfig, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async setSessionMode(params: { mode: 'webhook' | 'polling' | 'hybrid' }) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    const oldMode = session.mode;
+    
+    // Check if webhook is available for webhook/hybrid modes
+    if ((params.mode === 'webhook' || params.mode === 'hybrid') && !session.tunnelUrl) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `⚠️ Cannot set mode to ${params.mode} - webhook not configured.\n\nThe session is currently in ${oldMode} mode.`,
+          },
+        ],
+      };
+    }
+
+    await this.sessionManager.setSessionMode(session.sessionId, params.mode);
+
+    // Update health monitoring based on new mode
+    if (params.mode === 'hybrid' && this.webhookServer) {
+      this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
+    } else {
+      this.sessionManager.stopHealthMonitoring(session.sessionId);
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Session mode changed from ${oldMode} to ${params.mode}\n\n${
+            params.mode === 'webhook' ? '⚡ Using webhook for instant responses' :
+            params.mode === 'polling' ? '🔄 Using polling for reliable responses' :
+            '🔀 Using hybrid mode with webhook + polling backup'
+          }`,
         },
       ],
     };
