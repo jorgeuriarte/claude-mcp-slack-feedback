@@ -97,12 +97,11 @@ jobs:
           --max-instances 10 \
           --set-env-vars "\
             NODE_ENV=production,\
-            SLACK_BOT_TOKEN=${{ env.SLACK_BOT_TOKEN }},\
             SLACK_WORKSPACE_URL=${{ env.SLACK_WORKSPACE_URL }},\
             VERSION=${{ github.run_number }},\
             DEPLOYMENT_ENV=${{ inputs.environment || 'production' }}" \
           --set-secrets "\
-            SLACK_BOT_TOKEN=projects/${{ env.PROJECT_ID }}/secrets/slack-bot-token:latest"
+            SLACK_BOT_TOKEN=SLACK_BOT_TOKEN:latest"
 
     - name: Get function URL
       id: function_url
