@@ -10,8 +10,22 @@ import crypto from 'crypto';
 // No dotenv in production - Cloud Functions sets env vars
 
 const app = express();
+// Store raw body for signature verification
+app.use(express.raw({ type: 'application/x-www-form-urlencoded' }));
+app.use((req, res, next) => {
+  if (req.headers['content-type'] === 'application/x-www-form-urlencoded' && Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body.toString('utf8');
+    req.body = new URLSearchParams(req.rawBody);
+    // Convert to object for easier access
+    const parsed = {};
+    for (const [key, value] of req.body) {
+      parsed[key] = value;
+    }
+    req.body = parsed;
+  }
+  next();
+});
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // In-memory storage for responses (consider using Firestore for production)
 const responseStore = new Map();
@@ -60,10 +74,12 @@ app.post('/slack/events', (req, res) => {
   
   // Handle Slack events
   if (type === 'event_callback') {
-    const { event } = req.body;
+    // Parse the payload if it comes as a string
+    const payload = typeof req.body.payload === 'string' ? JSON.parse(req.body.payload) : req.body;
+    const { event } = payload;
     
     // We're interested in messages in threads
-    if (event.type === 'message' && event.thread_ts) {
+    if (event && event.type === 'message' && event.thread_ts) {
       handleSlackMessage(event);
     }
   }
@@ -223,8 +239,9 @@ function verifySlackSignature(req, signature, timestamp) {
     return false;
   }
   
-  // Compute signature
-  const sigBasestring = `v0:${timestamp}:${JSON.stringify(req.body)}`;
+  // Compute signature using raw body
+  const body = req.rawBody || JSON.stringify(req.body);
+  const sigBasestring = `v0:${timestamp}:${body}`;
   const mySignature = 'v0=' + crypto
     .createHmac('sha256', signingSecret)
     .update(sigBasestring, 'utf8')

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-mcp-slack-feedback-dev__setup_slack_config",
+      "mcp__claude-mcp-slack-feedback-dev__ask_feedback",
+      "mcp__claude-mcp-slack-feedback-dev__set_channel",
+      "mcp__claude-mcp-slack-feedback-dev__set_session_contact",
+      "mcp__claude-mcp-slack-feedback-dev__set_session_label"
+    ],
+    "deny": []
+  }
+}
