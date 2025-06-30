@@ -189,20 +189,25 @@ app.delete('/responses/:sessionId', (req, res) => {
 
 // Helper function to handle Slack messages
 function handleSlackMessage(event) {
-  // Extract session ID from channel name (e.g., #claude-jorge-abc123)
-  const channelMatch = event.channel_name?.match(/^claude-(.+)-(.+)$/);
-  if (!channelMatch) {
-    console.log('Not a Claude feedback channel, ignoring');
-    return;
-  }
+  console.log('Processing Slack message event:', JSON.stringify(event, null, 2));
   
-  const [, username, sessionId] = channelMatch;
   const threadTs = event.thread_ts;
   
   // Skip bot messages and thread starters
   if (event.bot_id || event.ts === event.thread_ts) {
+    console.log('Skipping bot message or thread starter');
     return;
   }
+  
+  // For now, use channel ID as key since we don't have channel name
+  // We'll map known channels to sessions
+  const channelToSession = {
+    'C093FLV2MK7': 'main', // claude-jorge-main
+    'C093FU0CXC5': 'feedback', // claude-feedback
+    'C093HQMJUUS': '3300b7437a1e0199' // claude-jorge-3300b7437a1e0199
+  };
+  
+  const sessionId = channelToSession[event.channel] || event.channel;
   
   // Store the response
   const key = `${sessionId}:${threadTs}`;
@@ -211,8 +216,7 @@ function handleSlackMessage(event) {
     text: event.text,
     ts: event.ts,
     threadTs: event.thread_ts,
-    channel: event.channel,
-    channelName: event.channel_name
+    channel: event.channel
   };
   
   responseStore.set(key, {
@@ -220,7 +224,7 @@ function handleSlackMessage(event) {
     response
   });
   
-  console.log(`Stored response for session ${sessionId}, thread ${threadTs}`);
+  console.log(`Stored response for session ${sessionId}, thread ${threadTs}, channel ${event.channel}`);
 }
 
 // Verify Slack request signature
