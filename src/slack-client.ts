@@ -11,6 +11,7 @@ export class SlackClient {
   private rateLimitRetries = 3;
   private rateLimitDelay = 1000;
   private lastMessageTs: Map<string, string> = new Map(); // Track last message timestamp per session
+  private sessionThreadTs: Map<string, string> = new Map(); // Track thread timestamp per session
 
   constructor(configManager: ConfigManager, sessionManager: SessionManager) {
     this.configManager = configManager;
@@ -242,6 +243,7 @@ export class SlackClient {
 
     // Store the message timestamp for this session
     this.lastMessageTs.set(session.sessionId, result.ts!);
+    this.sessionThreadTs.set(session.sessionId, result.ts!);
 
     return result.ts!;
   }
@@ -493,5 +495,9 @@ export class SlackClient {
       }
       throw error;
     }
+  }
+
+  async getLastThreadTs(sessionId: string): Promise<string | undefined> {
+    return this.sessionThreadTs.get(sessionId);
   }
 }

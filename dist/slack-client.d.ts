@@ -9,6 +9,7 @@ export declare class SlackClient {
     private rateLimitRetries;
     private rateLimitDelay;
     private lastMessageTs;
+    private sessionThreadTs;
     constructor(configManager: ConfigManager, sessionManager: SessionManager);
     init(): Promise<void>;
     isConfigured(): boolean;
@@ -37,5 +38,6 @@ export declare class SlackClient {
         is_member: boolean;
     }>>;
     private retryWithBackoff;
+    getLastThreadTs(sessionId: string): Promise<string | undefined>;
 }
 //# sourceMappingURL=slack-client.d.ts.map

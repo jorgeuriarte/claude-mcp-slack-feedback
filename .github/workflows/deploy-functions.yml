@@ -26,6 +26,7 @@ env:
   REGION: ${{ secrets.GCP_REGION || 'europe-west1' }}
   SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
   SLACK_WORKSPACE_URL: ${{ secrets.SLACK_WORKSPACE_URL }}
+  SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
 
 jobs:
   deploy:
@@ -55,8 +56,8 @@ jobs:
         # Copy built files to deployment directory
         cp -r dist deploy/functions/
         
-        # Use the Cloud Functions wrapper
-        cp deploy/functions/index-simple.js deploy/functions/index.js
+        # Use the webhook server for Cloud Functions
+        cp deploy/functions/webhook-server.js deploy/functions/index.js
         
         # Create a simplified package.json without build script
         node -e "
@@ -118,6 +119,7 @@ jobs:
             NODE_ENV=production,\
             SLACK_BOT_TOKEN=${{ env.SLACK_BOT_TOKEN }},\
             SLACK_WORKSPACE_URL=${{ env.SLACK_WORKSPACE_URL }},\
+            SLACK_SIGNING_SECRET=${{ env.SLACK_SIGNING_SECRET }},\
             VERSION=${{ github.run_number }},\
             DEPLOYMENT_ENV=${{ inputs.environment || 'production' }}"
 

@@ -1,7 +1,10 @@
+import { CloudPollingClient } from './cloud-polling-client.js';
 export class PollingStrategy {
     slackClient;
     sessionId;
     mode;
+    useCloudPolling;
+    cloudClient;
     fibonacciSequence = [5, 8, 13, 21, 34, 55]; // seconds - start at 5s to avoid rate limits
     longPollingInterval = 60; // seconds after fibonacci
     minPollingInterval = 10; // minimum seconds between API calls to respect rate limits
@@ -15,10 +18,16 @@ export class PollingStrategy {
         /^(no.*(?:hagas|sigas|continues))$/i,
         /^(mejor.*no)$/i
     ];
-    constructor(slackClient, sessionId, mode) {
+    constructor(slackClient, sessionId, mode, useCloudPolling = false, cloudClient) {
         this.slackClient = slackClient;
         this.sessionId = sessionId;
         this.mode = mode;
+        this.useCloudPolling = useCloudPolling;
+        this.cloudClient = cloudClient;
+        // Initialize cloud client if not provided but cloud polling is enabled
+        if (useCloudPolling && !cloudClient) {
+            this.cloudClient = new CloudPollingClient();
+        }
     }
     /**
      * Execute polling strategy based on mode
@@ -45,7 +54,24 @@ export class PollingStrategy {
             try {
                 // Ensure we respect rate limits
                 await this.ensureRateLimit();
-                const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+                let responses;
+                if (this.useCloudPolling && this.cloudClient) {
+                    // Poll from Cloud Functions
+                    const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+                    const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+                    responses = cloudResponses.map(r => ({
+                        response: r.text,
+                        timestamp: r.timestamp,
+                        user: r.user,
+                        sessionId: this.sessionId,
+                        userId: r.user,
+                        threadTs: r.threadTs
+                    }));
+                }
+                else {
+                    // Poll directly from Slack
+                    responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+                }
                 if (responses.length > 0) {
                     console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
                     return {
@@ -121,7 +147,24 @@ export class PollingStrategy {
             try {
                 // Ensure we respect rate limits
                 await this.ensureRateLimit();
-                const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+                let responses;
+                if (this.useCloudPolling && this.cloudClient) {
+                    // Poll from Cloud Functions
+                    const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+                    const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+                    responses = cloudResponses.map(r => ({
+                        response: r.text,
+                        timestamp: r.timestamp,
+                        user: r.user,
+                        sessionId: this.sessionId,
+                        userId: r.user,
+                        threadTs: r.threadTs
+                    }));
+                }
+                else {
+                    // Poll directly from Slack
+                    responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+                }
                 if (responses.length > 0) {
                     console.log(`[PollingStrategy] Found ${responses.length} responses in courtesy mode`);
                     // Check if any response is negative/blocking
@@ -253,6 +296,10 @@ export class PollingStrategy {
     }
     static createCourtesyInform(slackClient, sessionId) {
         return new PollingStrategy(slackClient, sessionId, 'courtesy-inform');
+    }
+    static createCloudPolling(slackClient, sessionId, cloudFunctionUrl) {
+        const cloudClient = new CloudPollingClient(cloudFunctionUrl);
+        return new PollingStrategy(slackClient, sessionId, 'feedback-required', true, cloudClient);
     }
 }
 //# sourceMappingURL=polling-strategy.js.map

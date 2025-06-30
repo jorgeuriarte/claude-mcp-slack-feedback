@@ -1,5 +1,6 @@
 import { FeedbackResponse } from './types.js';
 import { SlackClient } from './slack-client.js';
+import { CloudPollingClient } from './cloud-polling-client.js';
 
 export type PollingMode = 'feedback-required' | 'courtesy-inform';
 
@@ -27,8 +28,15 @@ export class PollingStrategy {
   constructor(
     private slackClient: SlackClient,
     private sessionId: string,
-    private mode: PollingMode
-  ) {}
+    private mode: PollingMode,
+    private useCloudPolling: boolean = false,
+    private cloudClient?: CloudPollingClient
+  ) {
+    // Initialize cloud client if not provided but cloud polling is enabled
+    if (useCloudPolling && !cloudClient) {
+      this.cloudClient = new CloudPollingClient();
+    }
+  }
 
   /**
    * Execute polling strategy based on mode
@@ -58,7 +66,23 @@ export class PollingStrategy {
         // Ensure we respect rate limits
         await this.ensureRateLimit();
         
-        const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        let responses: FeedbackResponse[];
+        if (this.useCloudPolling && this.cloudClient) {
+          // Poll from Cloud Functions
+          const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+          const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+          responses = cloudResponses.map(r => ({
+            response: r.text,
+            timestamp: r.timestamp,
+            user: r.user,
+            sessionId: this.sessionId,
+            userId: r.user,
+            threadTs: r.threadTs
+          }));
+        } else {
+          // Poll directly from Slack
+          responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        }
         
         if (responses.length > 0) {
           console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
@@ -142,7 +166,23 @@ export class PollingStrategy {
         // Ensure we respect rate limits
         await this.ensureRateLimit();
         
-        const responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        let responses: FeedbackResponse[];
+        if (this.useCloudPolling && this.cloudClient) {
+          // Poll from Cloud Functions
+          const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+          const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+          responses = cloudResponses.map(r => ({
+            response: r.text,
+            timestamp: r.timestamp,
+            user: r.user,
+            sessionId: this.sessionId,
+            userId: r.user,
+            threadTs: r.threadTs
+          }));
+        } else {
+          // Poll directly from Slack
+          responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        }
         
         if (responses.length > 0) {
         console.log(`[PollingStrategy] Found ${responses.length} responses in courtesy mode`);
@@ -296,5 +336,10 @@ export class PollingStrategy {
 
   static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy {
     return new PollingStrategy(slackClient, sessionId, 'courtesy-inform');
+  }
+  
+  static createCloudPolling(slackClient: SlackClient, sessionId: string, cloudFunctionUrl?: string): PollingStrategy {
+    const cloudClient = new CloudPollingClient(cloudFunctionUrl);
+    return new PollingStrategy(slackClient, sessionId, 'feedback-required', true, cloudClient);
   }
 }

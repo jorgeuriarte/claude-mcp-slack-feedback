@@ -1,5 +1,6 @@
 import { FeedbackResponse } from './types.js';
 import { SlackClient } from './slack-client.js';
+import { CloudPollingClient } from './cloud-polling-client.js';
 export type PollingMode = 'feedback-required' | 'courtesy-inform';
 export interface PollingResult {
     responses: FeedbackResponse[];
@@ -10,13 +11,15 @@ export declare class PollingStrategy {
     private slackClient;
     private sessionId;
     private mode;
+    private useCloudPolling;
+    private cloudClient?;
     private readonly fibonacciSequence;
     private readonly longPollingInterval;
     private readonly minPollingInterval;
     private lastApiCallTime;
     private rateLimitRetryAfter;
     private readonly negativePatterns;
-    constructor(slackClient: SlackClient, sessionId: string, mode: PollingMode);
+    constructor(slackClient: SlackClient, sessionId: string, mode: PollingMode, useCloudPolling?: boolean, cloudClient?: CloudPollingClient | undefined);
     /**
      * Execute polling strategy based on mode
      */
@@ -63,5 +66,6 @@ export declare class PollingStrategy {
      */
     static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy;
     static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy;
+    static createCloudPolling(slackClient: SlackClient, sessionId: string, cloudFunctionUrl?: string): PollingStrategy;
 }
 //# sourceMappingURL=polling-strategy.d.ts.map

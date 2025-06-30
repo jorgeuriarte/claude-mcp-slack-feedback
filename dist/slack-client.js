@@ -7,6 +7,7 @@ export class SlackClient {
     rateLimitRetries = 3;
     rateLimitDelay = 1000;
     lastMessageTs = new Map(); // Track last message timestamp per session
+    sessionThreadTs = new Map(); // Track thread timestamp per session
     constructor(configManager, sessionManager) {
         this.configManager = configManager;
         this.sessionManager = sessionManager;
@@ -192,6 +193,7 @@ export class SlackClient {
         }));
         // Store the message timestamp for this session
         this.lastMessageTs.set(session.sessionId, result.ts);
+        this.sessionThreadTs.set(session.sessionId, result.ts);
         return result.ts;
     }
     getSessionEmoji(sessionId) {
@@ -392,6 +394,9 @@ export class SlackClient {
             }
             throw error;
         }
+    }
+    async getLastThreadTs(sessionId) {
+        return this.sessionThreadTs.get(sessionId);
     }
 }
 //# sourceMappingURL=slack-client.js.map
