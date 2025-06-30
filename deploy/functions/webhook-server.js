@@ -226,8 +226,9 @@ function handleSlackMessage(event) {
 // Verify Slack request signature
 function verifySlackSignature(req, signature, timestamp) {
   const signingSecret = process.env.SLACK_SIGNING_SECRET;
-  if (!signingSecret) {
-    console.error('SLACK_SIGNING_SECRET not configured');
+  console.log('Signing secret length:', signingSecret ? signingSecret.length : 0);
+  if (!signingSecret || signingSecret.trim() === '') {
+    console.error('SLACK_SIGNING_SECRET not configured or empty');
     return false;
   }
   
