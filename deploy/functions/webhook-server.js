@@ -7,6 +7,8 @@ import * as ff from '@google-cloud/functions-framework';
 import express from 'express';
 import crypto from 'crypto';
 
+// No dotenv in production - Cloud Functions sets env vars
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
