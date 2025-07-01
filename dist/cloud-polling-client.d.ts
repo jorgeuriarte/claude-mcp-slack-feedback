@@ -29,6 +29,10 @@ export declare class CloudPollingClient {
      */
     checkHealth(): Promise<boolean>;
     /**
+     * Poll for channel messages from Cloud Functions
+     */
+    pollChannelMessages(channelId: string): Promise<CloudResponse[]>;
+    /**
      * Clear stored responses for a session (cleanup)
      */
     clearSession(sessionId: string): Promise<void>;

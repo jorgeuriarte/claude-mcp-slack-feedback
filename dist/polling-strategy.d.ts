@@ -13,8 +13,12 @@ export declare class PollingStrategy {
     private mode;
     private useCloudPolling;
     private cloudClient?;
-    private readonly fibonacciSequence;
-    private readonly longPollingInterval;
+    static createCloudPolling(slackClient: SlackClient, sessionId: string, mode: PollingMode): PollingStrategy;
+    static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy;
+    static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy;
+    private readonly intensivePollingInterval;
+    private readonly intensivePollingDuration;
+    private readonly pauseInterval;
     private readonly minPollingInterval;
     private lastApiCallTime;
     private rateLimitRetryAfter;
@@ -29,7 +33,7 @@ export declare class PollingStrategy {
      */
     private executeFeedbackPolling;
     /**
-     * Courtesy inform mode - polls with fibonacci backoff, stops if no response
+     * Courtesy inform mode - polls for a limited time to check if user wants to change course
      */
     private executeCourtesyPolling;
     /**
@@ -41,31 +45,20 @@ export declare class PollingStrategy {
      */
     private sendWaitingMessage;
     /**
+     * Send a message about rate limiting
+     */
+    private sendRateLimitMessage;
+    /**
      * Sleep for specified milliseconds
      */
     private sleep;
     /**
-     * Ensure we respect rate limits before making API calls
+     * Ensure we don't exceed rate limits
      */
     private ensureRateLimit;
     /**
-     * Handle rate limit errors from Slack
+     * Handle rate limit by setting retry-after time
      */
-    handleRateLimit(retryAfter: number): void;
-    /**
-     * Send a rate limit message to the user
-     */
-    private sendRateLimitMessage;
-    /**
-     * Check if the process has been interrupted (placeholder)
-     * In real implementation, this would check for ESC key or other interrupt signals
-     */
-    private checkForInterrupt;
-    /**
-     * Create a polling strategy instance
-     */
-    static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy;
-    static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy;
-    static createCloudPolling(slackClient: SlackClient, sessionId: string, cloudFunctionUrl?: string): PollingStrategy;
+    private handleRateLimit;
 }
 //# sourceMappingURL=polling-strategy.d.ts.map

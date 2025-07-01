@@ -565,7 +565,7 @@ Use reactions for lightweight communication without adding noise.`,
       // Set up both webhook and polling strategies
       const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
       const pollingStrategy = useCloudPolling
-        ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, process.env.CLOUD_FUNCTION_URL)
+        ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
         : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
       
       const webhookTimeout = session.hybridConfig?.webhookTimeout || 5000;
@@ -655,7 +655,7 @@ Use reactions for lightweight communication without adding noise.`,
       // Standard polling mode - use cloud polling if configured
       const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
       const pollingStrategy = useCloudPolling
-        ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, process.env.CLOUD_FUNCTION_URL)
+        ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
         : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
       
       const result = await pollingStrategy.execute(threadTs);

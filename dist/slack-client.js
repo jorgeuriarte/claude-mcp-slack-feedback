@@ -398,6 +398,9 @@ export class SlackClient {
     async getLastThreadTs(sessionId) {
         return this.sessionThreadTs.get(sessionId);
     }
+    async getSession(sessionId) {
+        return this.configManager.getSession(sessionId);
+    }
     hasValidToken() {
         return !!this.client;
     }

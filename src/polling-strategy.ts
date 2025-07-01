@@ -11,8 +11,21 @@ export interface PollingResult {
 }
 
 export class PollingStrategy {
-  private readonly fibonacciSequence = [1, 2, 3, 5, 8, 13]; // seconds - aggressive polling for webhook mode
-  private readonly longPollingInterval = 30; // seconds after fibonacci - reduced for faster response
+  // Factory methods for backward compatibility
+  static createCloudPolling(slackClient: SlackClient, sessionId: string, mode: PollingMode): PollingStrategy {
+    return new PollingStrategy(slackClient, sessionId, mode, true);
+  }
+  
+  static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy {
+    return new PollingStrategy(slackClient, sessionId, 'feedback-required', false);
+  }
+  
+  static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy {
+    return new PollingStrategy(slackClient, sessionId, 'courtesy-inform', false);
+  }
+  private readonly intensivePollingInterval = 3; // seconds - check every 3 seconds during intensive phase
+  private readonly intensivePollingDuration = 60; // seconds - intensive polling for 1 minute
+  private readonly pauseInterval = 15; // seconds - pause between intensive polling cycles
   private readonly minPollingInterval = 1; // minimum seconds between webhook calls - can be aggressive
   private lastApiCallTime = 0;
   private rateLimitRetryAfter = 0;
@@ -55,8 +68,9 @@ export class PollingStrategy {
    */
   private async executeFeedbackPolling(threadTs?: string): Promise<PollingResult> {
     let attemptCount = 0;
-    let fibIndex = 0;
+    let cycleStartTime = Date.now();
     let lastCheckTime = Date.now();
+    let inIntensivePhase = true;
 
     while (true) {
       // Check for responses
@@ -94,7 +108,9 @@ export class PollingStrategy {
           // Poll directly from Slack
           responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
         }
-        
+
+        attemptCount++;
+
         if (responses.length > 0) {
           console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
           return {
@@ -113,65 +129,63 @@ export class PollingStrategy {
           await this.sendRateLimitMessage(threadTs);
           // Wait for rate limit period
           await this.sleep(retryAfter * 1000);
-          // Reset to longer intervals to be more conservative
-          if (fibIndex < this.fibonacciSequence.length - 2) {
-            fibIndex = this.fibonacciSequence.length - 2; // Jump to 34s interval
-          }
+          // Reset intensive phase after rate limit
+          cycleStartTime = Date.now();
+          inIntensivePhase = true;
           // Continue polling after rate limit wait
           continue;
         }
         throw error; // Re-throw non-rate-limit errors
       }
 
-      // Determine wait time
+      // Determine wait time based on phase
       let waitSeconds: number;
-      if (fibIndex < this.fibonacciSequence.length) {
-        waitSeconds = this.fibonacciSequence[fibIndex];
-        console.log(`[PollingStrategy] No response yet, waiting ${waitSeconds}s (Fibonacci index ${fibIndex})`);
-        fibIndex++;
-      } else {
-        // After fibonacci sequence, send waiting message
-        if (fibIndex === this.fibonacciSequence.length) {
-          console.log(`[PollingStrategy] Fibonacci sequence exhausted, sending waiting message`);
+      const elapsedSeconds = (Date.now() - cycleStartTime) / 1000;
+      
+      if (inIntensivePhase) {
+        // During intensive phase (first minute)
+        if (elapsedSeconds < this.intensivePollingDuration) {
+          waitSeconds = this.intensivePollingInterval;
+          console.log(`[PollingStrategy] Intensive polling: waiting ${waitSeconds}s (${Math.round(this.intensivePollingDuration - elapsedSeconds)}s remaining)`);
+        } else {
+          // Switch to pause phase
+          inIntensivePhase = false;
+          waitSeconds = this.pauseInterval;
+          console.log(`[PollingStrategy] Entering pause phase: waiting ${waitSeconds}s`);
           await this.sendWaitingMessage(threadTs);
-          fibIndex++; // Only send once
         }
-        waitSeconds = this.longPollingInterval;
-        console.log(`[PollingStrategy] Long polling mode, waiting ${waitSeconds}s`);
+      } else {
+        // After pause, restart intensive phase
+        cycleStartTime = Date.now();
+        inIntensivePhase = true;
+        waitSeconds = this.intensivePollingInterval;
+        console.log(`[PollingStrategy] Restarting intensive polling cycle`);
       }
 
       // Wait for next poll
       await this.sleep(waitSeconds * 1000);
       lastCheckTime = Date.now();
-      attemptCount++;
-
-      // Check if process wants to exit (would need to implement interrupt handling)
-      if (this.checkForInterrupt()) {
-        return {
-          responses: [],
-          shouldStop: true,
-          requiresFeedback: false
-        };
-      }
     }
   }
 
   /**
-   * Courtesy inform mode - polls with fibonacci backoff, stops if no response
+   * Courtesy inform mode - polls for a limited time to check if user wants to change course
    */
   private async executeCourtesyPolling(_threadTs?: string): Promise<PollingResult> {
-    let fibIndex = 0;
+    let attemptCount = 0;
+    let cycleStartTime = Date.now();
     let lastCheckTime = Date.now();
-
-    while (fibIndex < this.fibonacciSequence.length) {
-      const waitSeconds = this.fibonacciSequence[fibIndex];
-      console.log(`[PollingStrategy] Courtesy polling ${fibIndex + 1}/${this.fibonacciSequence.length}, waiting ${waitSeconds}s`);
+    
+    // For courtesy mode, we only do one intensive cycle
+    const maxDuration = this.intensivePollingDuration + this.pauseInterval;
+    
+    while ((Date.now() - cycleStartTime) / 1000 < maxDuration) {
+      const elapsedSeconds = (Date.now() - cycleStartTime) / 1000;
+      const waitSeconds = elapsedSeconds < this.intensivePollingDuration 
+        ? this.intensivePollingInterval 
+        : this.pauseInterval;
       
-      // Wait before checking
-      await this.sleep(waitSeconds * 1000);
-      
-      // Check for responses
-      console.log(`[PollingStrategy] Checking for courtesy responses since ${new Date(lastCheckTime).toLocaleTimeString()}`);
+      console.log(`[PollingStrategy] Courtesy polling ${attemptCount + 1}, waiting ${waitSeconds}s`);
       
       try {
         // Ensure we respect rate limits
@@ -205,31 +219,30 @@ export class PollingStrategy {
           // Poll directly from Slack
           responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
         }
-        
-        if (responses.length > 0) {
-        console.log(`[PollingStrategy] Found ${responses.length} responses in courtesy mode`);
-        // Check if any response is negative/blocking
-        const hasNegativeResponse = responses.some(r => 
-          this.isNegativeResponse(r.response)
-        );
 
-        if (hasNegativeResponse) {
-          console.log(`[PollingStrategy] Detected negative response, switching to feedback mode`);
+        attemptCount++;
+
+        if (responses.length > 0) {
+          // Check if any response is negative (user wants to stop/change)
+          const hasNegativeResponse = responses.some(r => this.isNegativeResponse(r.response));
+          
+          if (hasNegativeResponse) {
+            console.log(`[PollingStrategy] Negative response detected, stopping with requiresFeedback=true`);
+            return {
+              responses,
+              shouldStop: true,
+              requiresFeedback: true
+            };
+          }
+
+          // Non-negative response in courtesy mode
+          console.log(`[PollingStrategy] Non-negative response received, continuing`);
           return {
             responses,
-            shouldStop: true,
-            requiresFeedback: true
+            shouldStop: false,
+            requiresFeedback: false
           };
         }
-
-        // Non-negative response in courtesy mode
-        console.log(`[PollingStrategy] Non-negative response received, continuing`);
-        return {
-          responses,
-          shouldStop: false,
-          requiresFeedback: false
-        };
-      }
       } catch (error: any) {
         if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
           // Extract retry-after from error if available
@@ -238,18 +251,18 @@ export class PollingStrategy {
           console.log(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
           // Wait for rate limit to clear
           await this.sleep(retryAfter * 1000);
-          // Continue with remaining attempts but skip to end of sequence
-          fibIndex = Math.min(fibIndex + 2, this.fibonacciSequence.length - 1);
           continue;
         }
         throw error; // Re-throw non-rate-limit errors
       }
 
+      // Wait for next poll
+      await this.sleep(waitSeconds * 1000);
       lastCheckTime = Date.now();
-      fibIndex++;
+      attemptCount++;
     }
 
-    // No response after full fibonacci sequence - continue with work
+    // No response after full cycle - continue with work
     console.log(`[PollingStrategy] Courtesy polling completed with no response, continuing with work`);
     return {
       responses: [],
@@ -269,18 +282,17 @@ export class PollingStrategy {
   /**
    * Send a message indicating we're still waiting
    */
-  private async sendWaitingMessage(threadTs?: string): Promise<void> {
-    const messages = [
-      "⏳ Sigo esperando tu respuesta. Volveré a revisar en un minuto...",
-      "💭 Tomaré que necesitas más tiempo. Seguiré revisando cada minuto.",
-      "🔄 Continuaré esperando tu feedback. Revisaré periódicamente."
-    ];
-    
-    const message = messages[Math.floor(Math.random() * messages.length)];
-    
-    if (threadTs) {
-      await this.slackClient.updateProgress(message, threadTs);
-    }
+  private async sendWaitingMessage(_threadTs?: string): Promise<void> {
+    // TODO: Implement progress update method in SlackClient
+    console.log('[PollingStrategy] Would send waiting message here');
+  }
+
+  /**
+   * Send a message about rate limiting
+   */
+  private async sendRateLimitMessage(_threadTs?: string): Promise<void> {
+    // TODO: Implement progress update method in SlackClient
+    console.log('[PollingStrategy] Would send rate limit message here');
   }
 
   /**
@@ -291,23 +303,20 @@ export class PollingStrategy {
   }
 
   /**
-   * Ensure we respect rate limits before making API calls
+   * Ensure we don't exceed rate limits
    */
   private async ensureRateLimit(): Promise<void> {
-    const now = Date.now();
-    
     // Check if we're in a rate limit retry period
-    if (this.rateLimitRetryAfter > now) {
-      const waitTime = this.rateLimitRetryAfter - now;
-      console.log(`[PollingStrategy] Rate limited, waiting ${Math.ceil(waitTime / 1000)}s before next API call`);
+    if (this.rateLimitRetryAfter > Date.now()) {
+      const waitTime = this.rateLimitRetryAfter - Date.now();
+      console.log(`[PollingStrategy] In rate limit retry period, waiting ${Math.ceil(waitTime / 1000)}s`);
       await this.sleep(waitTime);
     }
-    
-    // Ensure minimum time between API calls
-    const timeSinceLastCall = now - this.lastApiCallTime;
+
+    // Ensure minimum interval between API calls
+    const timeSinceLastCall = Date.now() - this.lastApiCallTime;
     if (timeSinceLastCall < this.minPollingInterval * 1000) {
       const waitTime = (this.minPollingInterval * 1000) - timeSinceLastCall;
-      console.log(`[PollingStrategy] Throttling API calls, waiting ${Math.ceil(waitTime / 1000)}s`);
       await this.sleep(waitTime);
     }
     
@@ -315,53 +324,10 @@ export class PollingStrategy {
   }
 
   /**
-   * Handle rate limit errors from Slack
+   * Handle rate limit by setting retry-after time
    */
-  handleRateLimit(retryAfter: number): void {
+  private handleRateLimit(retryAfter: number): void {
     this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
-    console.log(`[PollingStrategy] Rate limit hit, will retry after ${retryAfter}s`);
-  }
-
-  /**
-   * Send a rate limit message to the user
-   */
-  private async sendRateLimitMessage(threadTs?: string): Promise<void> {
-    if (!threadTs) return;
-    
-    try {
-      await this.slackClient.updateProgress(
-        "⚠️ Alcancé el límite de consultas de Slack. Esperaré un minuto antes de continuar verificando respuestas...",
-        threadTs
-      );
-    } catch (error) {
-      // Ignore errors when sending rate limit message
-      console.log(`[PollingStrategy] Could not send rate limit message: ${error}`);
-    }
-  }
-
-  /**
-   * Check if the process has been interrupted (placeholder)
-   * In real implementation, this would check for ESC key or other interrupt signals
-   */
-  private checkForInterrupt(): boolean {
-    // TODO: Implement actual interrupt checking
-    // For now, always return false
-    return false;
-  }
-
-  /**
-   * Create a polling strategy instance
-   */
-  static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy {
-    return new PollingStrategy(slackClient, sessionId, 'feedback-required');
-  }
-
-  static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy {
-    return new PollingStrategy(slackClient, sessionId, 'courtesy-inform');
-  }
-  
-  static createCloudPolling(slackClient: SlackClient, sessionId: string, cloudFunctionUrl?: string): PollingStrategy {
-    const cloudClient = new CloudPollingClient(cloudFunctionUrl);
-    return new PollingStrategy(slackClient, sessionId, 'feedback-required', true, cloudClient);
+    console.log(`[PollingStrategy] Rate limit handled, retry after ${new Date(this.rateLimitRetryAfter).toLocaleTimeString()}`);
   }
 }

@@ -55,6 +55,29 @@ export class CloudPollingClient {
         }
     }
     /**
+     * Poll for channel messages from Cloud Functions
+     */
+    async pollChannelMessages(channelId) {
+        const url = `${this.cloudFunctionUrl}/channel-messages/${channelId}`;
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`Cloud function returned ${response.status}: ${await response.text()}`);
+            }
+            const data = await response.json();
+            return data.messages || [];
+        }
+        catch (error) {
+            console.error(`[CloudPollingClient] Error polling channel messages:`, error);
+            return [];
+        }
+    }
+    /**
      * Clear stored responses for a session (cleanup)
      */
     async clearSession(sessionId) {
