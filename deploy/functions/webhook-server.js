@@ -52,7 +52,7 @@ app.get('/health', (req, res) => {
 });
 
 // Slack URL verification
-app.post('/slack/events', (req, res) => {
+app.post('/slack/events', async (req, res) => {
   const { type, challenge, token } = req.body;
   
   // URL verification challenge
@@ -77,7 +77,7 @@ app.post('/slack/events', (req, res) => {
     
     // We're interested in messages in threads
     if (event && event.type === 'message' && event.thread_ts) {
-      handleSlackMessage(event);
+      await handleSlackMessage(event);
     }
   }
   
