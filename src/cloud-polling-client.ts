@@ -31,12 +31,13 @@ export class CloudPollingClient {
    * Poll for new responses from Cloud Functions
    */
   async pollResponses(sessionId: string, threadTs?: string): Promise<CloudResponse[]> {
-    const key = threadTs ? `${sessionId}:${threadTs}` : sessionId;
-    const since = this.lastTimestamp.get(key) || 0;
-    
+    // If we have threadTs, use it as the primary key since webhook stores under threadTs
     const endpoint = threadTs 
-      ? `/responses/${sessionId}/${threadTs}`
+      ? `/responses/${threadTs}/${threadTs}` // Use threadTs as session key
       : `/responses/${sessionId}`;
+    
+    const key = threadTs ? `${threadTs}:${threadTs}` : sessionId;
+    const since = this.lastTimestamp.get(key) || 0;
     
     const url = `${this.cloudFunctionUrl}${endpoint}?since=${since}`;
     

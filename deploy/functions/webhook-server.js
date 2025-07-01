@@ -216,55 +216,39 @@ async function handleSlackMessage(event) {
   
   // For thread messages, we need to look at the parent message
   if (event.thread_ts && event.ts !== event.thread_ts) {
+    const response = {
+      user: event.user,
+      text: event.text,
+      ts: event.ts,
+      threadTs: event.thread_ts,
+      channel: event.channel
+    };
+    
+    const timestamp = Date.now();
+    const responseData = { timestamp, response };
+    
+    // Store under multiple keys for flexible retrieval
+    const keys = [];
+    
+    // 1. Primary: sessionId:threadTs (if we have session ID)
     if (sessionId) {
-      // We have a session ID from the thread starter
-      const key = `${sessionId}:${event.thread_ts}`;
-      const response = {
-        user: event.user,
-        text: event.text,
-        ts: event.ts,
-        threadTs: event.thread_ts,
-        channel: event.channel
-      };
-      
-      responseStore.set(key, {
-        timestamp: Date.now(),
-        response
-      });
-      
-      console.log(`Stored response under key: ${key} (extracted session ID: ${sessionId})`);
-    } else {
-      // Fallback: Use channel mapping if we don't have session ID
-      console.log('No session ID found in thread starter, using channel mapping');
-      const channelToSession = {
-        'C093FLV2MK7': 'main',
-        'C093FU0CXC5': 'feedback', 
-        'C093HQMJUUS': '3300b7437a1e0199'
-      };
-      
-      // Store under multiple keys to handle different lookup patterns
-      const sessionIds = [
-        channelToSession[event.channel], // mapped session ID
-        event.channel, // raw channel ID
-      ].filter(Boolean);
-      
-      sessionIds.forEach(sid => {
-        const key = `${sid}:${event.thread_ts}`;
-        const response = {
-          user: event.user,
-          text: event.text,
-          ts: event.ts,
-          threadTs: event.thread_ts,
-          channel: event.channel
-        };
-        
-        responseStore.set(key, {
-          timestamp: Date.now(),
-          response
-        });
-        
-        console.log(`Stored response under key: ${key}`);
-      });
+      keys.push(`${sessionId}:${event.thread_ts}`);
+    }
+    
+    // 2. Thread-based: use threadTs as session ID  
+    keys.push(`${event.thread_ts}:${event.thread_ts}`);
+    
+    // 3. Channel-based fallback
+    keys.push(`${event.channel}:${event.thread_ts}`);
+    
+    // Store under all keys
+    keys.forEach(key => {
+      responseStore.set(key, responseData);
+      console.log(`Stored response under key: ${key}`);
+    });
+    
+    if (!sessionId) {
+      console.log('No session ID found in thread starter, will use threadTs as primary key');
     }
     
     return; // Exit early since we handled storage
