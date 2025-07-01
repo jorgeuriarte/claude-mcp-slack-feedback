@@ -101,8 +101,8 @@ app.post('/slack/events', async (req, res) => {
     // For JSON format, the event is directly in the body
     const { event } = req.body;
     
-    // We're interested in messages in threads
-    if (event && event.type === 'message' && event.thread_ts) {
+    // Handle all message events (both thread and channel messages)
+    if (event && event.type === 'message') {
       await handleSlackMessage(event);
     }
   }
@@ -240,8 +240,8 @@ async function handleSlackMessage(event) {
     return;
   }
   
-  // Handle channel messages (not in thread)
-  if (!event.thread_ts) {
+  // Handle channel messages (messages that start threads or are standalone)
+  if (!event.thread_ts || event.ts === event.thread_ts) {
     // Store channel message temporarily (5 minutes)
     const channelKey = `channel:${event.channel}:${event.ts}`;
     channelMessages.set(channelKey, {

@@ -111,3 +111,6 @@ Follow the 6-phase implementation plan from the specification:
 
 ## Additional Notes
 - Este MCP es para claude Code, *no para Claude Desktop*
+
+## MCP Environment Notes
+- El MCP mcp__claude-mcp-slack-feedback-dev es el que estamos construyendo ahora. Reiniciando este chat se deben ver los cambios. El MCP mcp__claude-mcp-slack-feedback-prod es una versión más estable previa (sin los cambios en curso).

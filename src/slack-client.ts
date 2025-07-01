@@ -500,6 +500,10 @@ export class SlackClient {
   async getLastThreadTs(sessionId: string): Promise<string | undefined> {
     return this.sessionThreadTs.get(sessionId);
   }
+  
+  async getSession(sessionId: string): Promise<any> {
+    return this.configManager.getSession(sessionId);
+  }
 
   hasValidToken(): boolean {
     return !!this.client;

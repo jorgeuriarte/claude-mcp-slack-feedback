@@ -11,9 +11,9 @@ export interface PollingResult {
 }
 
 export class PollingStrategy {
-  private readonly fibonacciSequence = [5, 8, 13, 21, 34, 55]; // seconds - start at 5s to avoid rate limits
-  private readonly longPollingInterval = 60; // seconds after fibonacci
-  private readonly minPollingInterval = 10; // minimum seconds between API calls to respect rate limits
+  private readonly fibonacciSequence = [1, 2, 3, 5, 8, 13]; // seconds - aggressive polling for webhook mode
+  private readonly longPollingInterval = 30; // seconds after fibonacci - reduced for faster response
+  private readonly minPollingInterval = 1; // minimum seconds between webhook calls - can be aggressive
   private lastApiCallTime = 0;
   private rateLimitRetryAfter = 0;
   private readonly negativePatterns = [
@@ -71,7 +71,18 @@ export class PollingStrategy {
           // Poll from Cloud Functions
           const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
           const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
-          responses = cloudResponses.map(r => ({
+          
+          // Also poll channel messages (aggressive polling against our own server)
+          const session = await this.slackClient.getSession?.(this.sessionId);
+          let channelResponses: any[] = [];
+          if (session?.channelId) {
+            channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+          }
+          
+          // Combine thread and channel responses
+          const allResponses = [...cloudResponses, ...channelResponses];
+          
+          responses = allResponses.map(r => ({
             response: r.text,
             timestamp: r.timestamp,
             user: r.user,
@@ -171,7 +182,18 @@ export class PollingStrategy {
           // Poll from Cloud Functions
           const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
           const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
-          responses = cloudResponses.map(r => ({
+          
+          // Also poll channel messages (aggressive polling against our own server)
+          const session = await this.slackClient.getSession?.(this.sessionId);
+          let channelResponses: any[] = [];
+          if (session?.channelId) {
+            channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+          }
+          
+          // Combine thread and channel responses
+          const allResponses = [...cloudResponses, ...channelResponses];
+          
+          responses = allResponses.map(r => ({
             response: r.text,
             timestamp: r.timestamp,
             user: r.user,
