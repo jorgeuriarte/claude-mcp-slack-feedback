@@ -500,4 +500,22 @@ export class SlackClient {
   async getLastThreadTs(sessionId: string): Promise<string | undefined> {
     return this.sessionThreadTs.get(sessionId);
   }
+
+  hasValidToken(): boolean {
+    return !!this.client;
+  }
+
+  async addReaction(channel: string, timestamp: string, reaction: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Slack client not initialized');
+    }
+
+    await this.retryWithBackoff(() =>
+      this.client!.reactions.add({
+        channel,
+        timestamp,
+        name: reaction
+      })
+    );
+  }
 }

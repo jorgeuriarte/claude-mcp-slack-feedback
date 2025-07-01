@@ -73,6 +73,23 @@ export interface MCPToolParams {
     context?: string;
     options?: string[];
   };
+  sendQuestion: {
+    question: string;
+    context?: string;
+    options?: string[];
+    priority?: 'low' | 'normal' | 'high' | 'urgent';
+    response_type?: 'quick' | 'detailed' | 'any';
+  };
+  checkResponses: {
+    question_id: string;
+    include_channel?: boolean;
+    channel_window?: number;
+  };
+  addReaction: {
+    channel: string;
+    timestamp: string;
+    reaction: string;
+  };
   informSlack: {
     message: string;
     context?: string;

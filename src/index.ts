@@ -14,6 +14,7 @@ import { SlackClient } from './slack-client.js';
 import { TunnelManager } from './tunnel-manager.js';
 import { WebhookServer } from './webhook-server.js';
 import { PollingStrategy } from './polling-strategy.js';
+import { CloudPollingClient } from './cloud-polling-client.js';
 import { MCPToolParams, FeedbackRequest } from './types.js';
 import { config } from 'dotenv';
 
@@ -89,6 +90,122 @@ class SlackFeedbackMCPServer {
               },
             },
             required: ['question'],
+          },
+        },
+        {
+          name: 'send_question',
+          description: `Send a question to Slack without waiting for response.
+  
+Returns immediately with a question_id that can be used to check for responses later.
+The question will be posted to the configured channel with visual indicators.
+
+Use this when you want to continue working while waiting for a human response.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              question: {
+                type: 'string',
+                description: 'The question to ask',
+              },
+              context: {
+                type: 'string',
+                description: 'Optional context to help the human understand',
+              },
+              options: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Suggested response options',
+              },
+              priority: {
+                type: 'string',
+                enum: ['low', 'normal', 'high', 'urgent'],
+                description: 'Visual priority indicator (affects emoji and formatting)',
+              },
+              response_type: {
+                type: 'string',
+                enum: ['quick', 'detailed', 'any'],
+                description: 'quick: expect short answer in channel, detailed: expect thread response',
+              },
+            },
+            required: ['question'],
+          },
+        },
+        {
+          name: 'check_responses',
+          description: `Check for responses to a previously sent question.
+
+This tool will:
+1. Check for responses in the thread
+2. Check for recent channel messages (last 2 minutes)
+3. Return all potential responses with context
+
+YOU (the LLM) should analyze the responses and decide:
+- If a channel message seems like a response to your question by considering:
+  * Timing: Messages within 30s are very likely responses
+  * Content: Does it answer or relate to your question?
+  * User: Is it from someone who typically responds?
+  * Options: Does it match suggested options?
+- Confidence level: high (certain), medium (probable), low (possible)
+- Whether to accept, ignore, or ask for clarification
+
+Channel messages include:
+- Time elapsed since your question
+- User information
+- Full message text
+
+Example analysis:
+- Question: "REST or GraphQL?"
+- Channel message (10s later): "rest" → High confidence response
+- Channel message (15s later): "hey did you see the PR?" → Low confidence, likely unrelated`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              question_id: {
+                type: 'string',
+                description: 'The ID returned by send_question',
+              },
+              include_channel: {
+                type: 'boolean',
+                description: 'Whether to check channel messages for potential responses (default: true)',
+              },
+              channel_window: {
+                type: 'number',
+                description: 'Seconds to look back for channel messages (max 300, default: 120)',
+              },
+            },
+            required: ['question_id'],
+          },
+        },
+        {
+          name: 'add_reaction',
+          description: `Add an emoji reaction to any message.
+  
+Common reactions:
+- white_check_mark (✅): Confirmed/accepted
+- eyes (👀): Seen/processing
+- thinking_face (🤔): Considering
+- question (❓): Need clarification
+- timer_clock (⏲️): Will check back later
+- thumbsup (👍): Acknowledged
+
+Use reactions for lightweight communication without adding noise.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              channel: {
+                type: 'string',
+                description: 'Channel ID where the message is',
+              },
+              timestamp: {
+                type: 'string',
+                description: 'Message timestamp',
+              },
+              reaction: {
+                type: 'string',
+                description: 'Emoji name without colons (e.g., "thumbsup", not ":thumbsup:")',
+              },
+            },
+            required: ['channel', 'timestamp', 'reaction'],
           },
         },
         {
@@ -288,6 +405,15 @@ class SlackFeedbackMCPServer {
           
           case 'ask_feedback':
             return await this.askFeedback(args as MCPToolParams['askFeedback']);
+          
+          case 'send_question':
+            return await this.sendQuestion(args as MCPToolParams['sendQuestion']);
+          
+          case 'check_responses':
+            return await this.checkResponses(args as MCPToolParams['checkResponses']);
+          
+          case 'add_reaction':
+            return await this.addReaction(args as MCPToolParams['addReaction']);
           
           case 'inform_slack':
             return await this.informSlack(args as MCPToolParams['informSlack']);
@@ -578,6 +704,117 @@ class SlackFeedbackMCPServer {
     }
   }
 
+  private async sendQuestion(params: MCPToolParams['sendQuestion']) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'No active session');
+    }
+
+    // Check if channel is set for this session
+    if (!session.channelId || session.channelId === '') {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `⚠️ No channel selected for this session!\n\nPlease first:\n1. Use 'list_channels' to see available channels\n2. Use 'set_channel' to select a channel`,
+          },
+        ],
+      };
+    }
+
+    // Check if session needs configuration
+    if (!session.sessionLabel || !session.sessionContact) {
+      const suggestedLabel = SessionManager.extractSessionLabelFromPath();
+      let configMessage = `⚠️ Session needs configuration before sending questions:\n\n`;
+      
+      if (!session.sessionLabel) {
+        configMessage += `📝 **Session Label**: Not set\n`;
+        configMessage += `   Suggested: "${suggestedLabel}"\n`;
+        configMessage += `   Use: set_session_label with label "${suggestedLabel}"\n\n`;
+      }
+      
+      if (!session.sessionContact) {
+        configMessage += `👤 **Contact**: Not set\n`;
+        configMessage += `   Use: set_session_contact with contact "jorge" (or "here" for @here)\n\n`;
+      }
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: configMessage,
+          },
+        ],
+      };
+    }
+
+    // Create request with priority indicators
+    const priorityEmojis = {
+      low: '🟢',
+      normal: '🔵',
+      high: '🟡',
+      urgent: '🔴'
+    };
+    
+    const priority = params.priority || 'normal';
+    const emoji = priorityEmojis[priority];
+    
+    const request: FeedbackRequest = {
+      sessionId: session.sessionId,
+      question: params.question,
+      context: params.context,
+      options: params.options,
+      timestamp: Date.now()
+    };
+
+    // Send the question with priority indicator
+    const enhancedRequest = {
+      ...request,
+      question: `${emoji} ${request.question}${params.response_type === 'quick' ? ' (quick response ok)' : ''}`
+    };
+    
+    const threadTs = await this.slackClient.sendFeedback(enhancedRequest);
+    
+    // Generate question ID
+    const questionId = `${session.sessionId}:${threadTs}`;
+    
+    // Store question metadata for later retrieval
+    this.questionMetadata.set(questionId, {
+      threadTs,
+      sessionId: session.sessionId,
+      channelId: session.channelId,
+      question: params.question,
+      priority,
+      responseType: params.response_type || 'any',
+      sentAt: Date.now()
+    });
+    
+    // Get channel name if we don't have it
+    const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Question sent!\n\n**Question ID**: ${questionId}\n**Channel**: #${channelName}\n**Priority**: ${priority} ${emoji}\n**Mode**: ${session.mode}\n\nUse 'check_responses' with this question_id to check for responses later.`,
+        },
+      ],
+    };
+  }
+
+  // Add question metadata storage
+  private questionMetadata = new Map<string, {
+    threadTs: string;
+    sessionId: string;
+    channelId: string;
+    question: string;
+    priority: string;
+    responseType: string;
+    sentAt: number;
+  }>();
+
   private async informSlack(params: MCPToolParams['informSlack']) {
     await this.ensureSession();
     
@@ -672,6 +909,202 @@ class SlackFeedbackMCPServer {
         },
       ],
     };
+  }
+
+  private async checkResponses(params: MCPToolParams['checkResponses']) {
+    // Get question metadata
+    const metadata = this.questionMetadata.get(params.question_id);
+    if (!metadata) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Question ID not found: ${params.question_id}\n\nMake sure you're using the ID returned by send_question.`,
+          },
+        ],
+      };
+    }
+
+    const includeChannel = params.include_channel ?? true;
+    const channelWindow = Math.min(params.channel_window ?? 120, 300); // Max 5 minutes
+    
+    // Get the session
+    const session = this.configManager.getSession(metadata.sessionId);
+    if (!session) {
+      throw new McpError(ErrorCode.InternalError, 'Session not found');
+    }
+
+    const responses: any[] = [];
+    
+    // 1. Check thread responses
+    try {
+      // Use cloud polling if available
+      if (process.env.CLOUD_FUNCTION_URL) {
+        const cloudClient = new CloudPollingClient(process.env.CLOUD_FUNCTION_URL);
+        const threadResponses = await cloudClient.pollResponses(metadata.threadTs, metadata.threadTs);
+        
+        threadResponses.forEach(r => {
+          responses.push({
+            type: 'thread',
+            user: r.user,
+            text: r.text,
+            timestamp: r.ts,
+            timeElapsed: 0, // Thread responses don't need elapsed time
+          });
+        });
+      }
+    } catch (error) {
+      console.error('[checkResponses] Error fetching thread responses:', error);
+    }
+    
+    // 2. Check channel messages if requested
+    if (includeChannel && process.env.CLOUD_FUNCTION_URL) {
+      try {
+        const channelUrl = `${process.env.CLOUD_FUNCTION_URL}/channel-messages/${metadata.channelId}`;
+        const since = metadata.sentAt - (channelWindow * 1000);
+        const response = await fetch(`${channelUrl}?since=${since}`);
+        
+        if (response.ok) {
+          const data = await response.json() as {
+            channelId: string;
+            messages: Array<{
+              user: string;
+              text: string;
+              ts: string;
+              channel: string;
+              timestamp: number;
+            }>;
+            count: number;
+          };
+          const questionTs = parseFloat(metadata.threadTs);
+          
+          data.messages.forEach((msg) => {
+            const msgTs = parseFloat(msg.ts);
+            // Only include messages after the question
+            if (msgTs > questionTs) {
+              const elapsed = Math.round(msgTs - questionTs);
+              responses.push({
+                type: 'channel',
+                user: msg.user,
+                text: msg.text,
+                timestamp: msg.ts,
+                timeElapsed: elapsed,
+                channel: msg.channel,
+              });
+            }
+          });
+        }
+      } catch (error) {
+        console.error('[checkResponses] Error fetching channel messages:', error);
+      }
+    }
+    
+    // Format the response with context for LLM analysis
+    let responseText = `**Question**: ${metadata.question}\n`;
+    responseText += `**Asked**: ${new Date(metadata.sentAt).toLocaleTimeString()}\n`;
+    responseText += `**Priority**: ${metadata.priority}\n\n`;
+    
+    if (responses.length === 0) {
+      responseText += '**No responses found yet.**\n\n';
+      responseText += 'Consider:\n';
+      responseText += '- Waiting a bit longer\n';
+      responseText += '- Using mark_no_response if enough time has passed\n';
+      responseText += '- Sending a follow-up message';
+    } else {
+      responseText += `**Found ${responses.length} potential response(s):**\n\n`;
+      
+      // Thread responses first
+      const threadResponses = responses.filter(r => r.type === 'thread');
+      if (threadResponses.length > 0) {
+        responseText += '📎 **Thread Responses:**\n';
+        threadResponses.forEach(r => {
+          responseText += `• <@${r.user}>: "${r.text}"\n`;
+        });
+        responseText += '\n';
+      }
+      
+      // Channel messages
+      const channelResponses = responses.filter(r => r.type === 'channel');
+      if (channelResponses.length > 0) {
+        responseText += '💬 **Channel Messages (analyze these for relevance):**\n';
+        channelResponses.forEach(r => {
+          responseText += `• <@${r.user}> (${r.timeElapsed}s after): "${r.text}"\n`;
+        });
+        responseText += '\n';
+        responseText += '**Your analysis should consider:**\n';
+        responseText += '- Timing (closer = more likely)\n';
+        responseText += '- Content relevance\n';
+        responseText += '- User patterns\n';
+        responseText += '- Match with suggested options\n';
+      }
+    }
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: responseText,
+        },
+      ],
+      metadata: {
+        questionId: params.question_id,
+        responses,
+        threadTs: metadata.threadTs,
+        channelId: metadata.channelId,
+      },
+    };
+  }
+
+  private async addReaction(params: MCPToolParams['addReaction']) {
+    try {
+      // Ensure we have a client
+      if (!this.slackClient.hasValidToken()) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          'Slack not configured. Use setup_slack_config first.'
+        );
+      }
+
+      // Add the reaction using the Slack Web API
+      await this.slackClient.addReaction(
+        params.channel,
+        params.timestamp,
+        params.reaction
+      );
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `✅ Added :${params.reaction}: reaction to message`,
+          },
+        ],
+      };
+    } catch (error) {
+      // Handle specific Slack errors
+      if (error instanceof Error) {
+        if (error.message.includes('already_reacted')) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `ℹ️ Already reacted with :${params.reaction}: to this message`,
+              },
+            ],
+          };
+        } else if (error.message.includes('invalid_name')) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `❌ Invalid reaction name: ${params.reaction}\n\nUse emoji names without colons, e.g., "thumbsup" not ":thumbsup:"`,
+              },
+            ],
+          };
+        }
+      }
+      throw error;
+    }
   }
 
   private async getResponses(params: MCPToolParams['getResponses']) {

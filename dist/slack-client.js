@@ -398,5 +398,18 @@ export class SlackClient {
     async getLastThreadTs(sessionId) {
         return this.sessionThreadTs.get(sessionId);
     }
+    hasValidToken() {
+        return !!this.client;
+    }
+    async addReaction(channel, timestamp, reaction) {
+        if (!this.client) {
+            throw new Error('Slack client not initialized');
+        }
+        await this.retryWithBackoff(() => this.client.reactions.add({
+            channel,
+            timestamp,
+            name: reaction
+        }));
+    }
 }
 //# sourceMappingURL=slack-client.js.map

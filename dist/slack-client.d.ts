@@ -39,5 +39,7 @@ export declare class SlackClient {
     }>>;
     private retryWithBackoff;
     getLastThreadTs(sessionId: string): Promise<string | undefined>;
+    hasValidToken(): boolean;
+    addReaction(channel: string, timestamp: string, reaction: string): Promise<void>;
 }
 //# sourceMappingURL=slack-client.d.ts.map

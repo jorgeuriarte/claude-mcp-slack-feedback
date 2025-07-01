@@ -47,7 +47,33 @@ app.get('/health', (req, res) => {
     version: process.env.VERSION || '1.3.1',
     mode: 'webhook-receiver',
     timestamp: new Date().toISOString(),
-    activeResponses: responseStore.size
+    activeResponses: responseStore.size,
+    activeChannelMessages: channelMessages.size
+  });
+});
+
+// Get channel messages endpoint
+app.get('/channel-messages/:channelId', (req, res) => {
+  const { channelId } = req.params;
+  const since = req.query.since ? parseInt(req.query.since) : Date.now() - (5 * 60 * 1000);
+  
+  const messages = [];
+  for (const [key, data] of channelMessages.entries()) {
+    if (key.startsWith(`channel:${channelId}:`) && data.timestamp >= since) {
+      messages.push({
+        ...data.message,
+        timestamp: data.timestamp
+      });
+    }
+  }
+  
+  // Sort by timestamp
+  messages.sort((a, b) => a.timestamp - b.timestamp);
+  
+  res.json({
+    channelId,
+    messages,
+    count: messages.length
   });
 });
 
@@ -187,6 +213,9 @@ app.delete('/responses/:sessionId', (req, res) => {
 // Store thread starters for session extraction
 const threadStarters = new Map();
 
+// Store channel messages temporarily
+const channelMessages = new Map();
+
 // Helper function to handle Slack messages
 async function handleSlackMessage(event) {
   console.log('Processing Slack message event:', JSON.stringify(event, null, 2));
@@ -205,9 +234,40 @@ async function handleSlackMessage(event) {
     }
   }
   
-  // Skip bot messages and thread starters
-  if (event.bot_id || event.ts === event.thread_ts) {
-    console.log('Skipping bot message or thread starter');
+  // Skip bot messages
+  if (event.bot_id) {
+    console.log('Skipping bot message');
+    return;
+  }
+  
+  // Handle channel messages (not in thread)
+  if (!event.thread_ts) {
+    // Store channel message temporarily (5 minutes)
+    const channelKey = `channel:${event.channel}:${event.ts}`;
+    channelMessages.set(channelKey, {
+      timestamp: Date.now(),
+      message: {
+        user: event.user,
+        text: event.text,
+        ts: event.ts,
+        channel: event.channel
+      }
+    });
+    console.log(`Stored channel message: ${channelKey}`);
+    
+    // Clean old channel messages (older than 5 minutes)
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+    for (const [key, data] of channelMessages.entries()) {
+      if (data.timestamp < fiveMinutesAgo) {
+        channelMessages.delete(key);
+      }
+    }
+    return;
+  }
+  
+  // Skip thread starters
+  if (event.ts === event.thread_ts) {
+    console.log('Skipping thread starter');
     return;
   }
   
