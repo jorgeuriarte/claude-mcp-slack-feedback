@@ -11,21 +11,19 @@ import crypto from 'crypto';
 
 const app = express();
 // Store raw body for signature verification
-app.use(express.raw({ type: 'application/x-www-form-urlencoded' }));
+app.use(express.raw({ type: 'application/json' }));
 app.use((req, res, next) => {
-  if (req.headers['content-type'] === 'application/x-www-form-urlencoded' && Buffer.isBuffer(req.body)) {
+  if (req.headers['content-type'] === 'application/json' && Buffer.isBuffer(req.body)) {
     req.rawBody = req.body.toString('utf8');
-    req.body = new URLSearchParams(req.rawBody);
-    // Convert to object for easier access
-    const parsed = {};
-    for (const [key, value] of req.body) {
-      parsed[key] = value;
+    try {
+      req.body = JSON.parse(req.rawBody);
+    } catch (e) {
+      console.error('Failed to parse JSON body:', e);
+      req.body = {};
     }
-    req.body = parsed;
   }
   next();
 });
-app.use(express.json());
 
 // In-memory storage for responses (consider using Firestore for production)
 const responseStore = new Map();
@@ -74,9 +72,8 @@ app.post('/slack/events', (req, res) => {
   
   // Handle Slack events
   if (type === 'event_callback') {
-    // Parse the payload if it comes as a string
-    const payload = typeof req.body.payload === 'string' ? JSON.parse(req.body.payload) : req.body;
-    const { event } = payload;
+    // For JSON format, the event is directly in the body
+    const { event } = req.body;
     
     // We're interested in messages in threads
     if (event && event.type === 'message' && event.thread_ts) {
