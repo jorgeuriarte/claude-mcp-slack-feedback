@@ -1,4 +1,5 @@
 import express from 'express';
+import { logger } from './logger.js';
 export class WebhookServer {
     app;
     server;
@@ -57,7 +58,7 @@ export class WebhookServer {
                 }
             }
             catch (error) {
-                console.error('Error processing interactive payload:', error);
+                logger.error('Error processing interactive payload:', error);
             }
             res.sendStatus(200);
         });
@@ -83,7 +84,7 @@ export class WebhookServer {
         return new Promise((resolve, reject) => {
             try {
                 this.server = this.app.listen(this.port, () => {
-                    console.log(`Webhook server listening on port ${this.port}`);
+                    logger.debug(`Webhook server listening on port ${this.port}`);
                     resolve();
                 });
                 this.server.on('error', (error) => {
@@ -117,12 +118,12 @@ export class WebhookServer {
     setFeedbackResolver(sessionId, threadTs, resolver) {
         const key = `${sessionId}:${threadTs}`;
         this.feedbackResolvers.set(key, resolver);
-        console.log(`[WebhookServer] Set feedback resolver for ${key}`);
+        logger.debug(`[WebhookServer] Set feedback resolver for ${key}`);
     }
     clearFeedbackResolver(sessionId, threadTs) {
         const key = `${sessionId}:${threadTs}`;
         this.feedbackResolvers.delete(key);
-        console.log(`[WebhookServer] Cleared feedback resolver for ${key}`);
+        logger.debug(`[WebhookServer] Cleared feedback resolver for ${key}`);
     }
     resolveFeedback(sessionId, threadTs, response) {
         const key = `${sessionId}:${threadTs}`;
@@ -130,7 +131,7 @@ export class WebhookServer {
         if (resolver) {
             resolver(response);
             this.feedbackResolvers.delete(key);
-            console.log(`[WebhookServer] Resolved feedback for ${key}`);
+            logger.debug(`[WebhookServer] Resolved feedback for ${key}`);
         }
     }
 }

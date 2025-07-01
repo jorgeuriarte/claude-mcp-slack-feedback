@@ -1,6 +1,7 @@
 import { FeedbackResponse } from './types.js';
 import { SlackClient } from './slack-client.js';
 import { CloudPollingClient } from './cloud-polling-client.js';
+import { logger } from './logger.js';
 
 export type PollingMode = 'feedback-required' | 'courtesy-inform';
 
@@ -8,6 +9,8 @@ export interface PollingResult {
   responses: FeedbackResponse[];
   shouldStop: boolean;
   requiresFeedback?: boolean;
+  requiresInterpretation?: boolean;
+  timedOut?: boolean;
 }
 
 export class PollingStrategy {
@@ -29,14 +32,6 @@ export class PollingStrategy {
   private readonly minPollingInterval = 1; // minimum seconds between webhook calls - can be aggressive
   private lastApiCallTime = 0;
   private rateLimitRetryAfter = 0;
-  private readonly negativePatterns = [
-    /^(no|wait|stop|espera|para|alto)$/i,
-    /^(cancel|cancelar|abortar|abort)$/i,
-    /^(tengo otra idea|mejor no|pensándolo mejor)$/i,
-    /^(espera un momento|dame un segundo)$/i,
-    /^(no.*(?:hagas|sigas|continues))$/i,
-    /^(mejor.*no)$/i
-  ];
 
   constructor(
     private slackClient: SlackClient,
@@ -55,12 +50,40 @@ export class PollingStrategy {
    * Execute polling strategy based on mode
    */
   async execute(threadTs?: string): Promise<PollingResult> {
-    console.log(`[PollingStrategy] Starting ${this.mode} polling for session ${this.sessionId}`);
+    logger.info(`Starting ${this.mode} polling for session ${this.sessionId}`);
     if (this.mode === 'feedback-required') {
       return this.executeFeedbackPolling(threadTs);
     } else {
       return this.executeCourtesyPolling(threadTs);
     }
+  }
+
+  /**
+   * Execute polling with timeout (for send_question)
+   */
+  async executeWithTimeout(threadTs: string, timeoutSeconds: number): Promise<PollingResult> {
+    logger.info(`Starting feedback polling with ${timeoutSeconds}s timeout for session ${this.sessionId}`);
+
+    if (timeoutSeconds <= 0) {
+      // No timeout - poll indefinitely
+      return await this.executeFeedbackPolling(threadTs);
+    }
+
+    // Create timeout promise
+    const timeoutPromise = new Promise<PollingResult>((resolve) => {
+      setTimeout(() => {
+        resolve({
+          responses: [],
+          shouldStop: false,
+          timedOut: true
+        });
+      }, timeoutSeconds * 1000);
+    });
+
+    // Race between polling and timeout
+    const pollingPromise = this.executeFeedbackPolling(threadTs);
+    
+    return await Promise.race([pollingPromise, timeoutPromise]);
   }
 
   /**
@@ -74,7 +97,7 @@ export class PollingStrategy {
 
     while (true) {
       // Check for responses
-      console.log(`[PollingStrategy] Feedback polling attempt ${attemptCount + 1}, checking for messages since ${new Date(lastCheckTime).toLocaleTimeString()}`);
+      logger.debug(`Feedback polling attempt ${attemptCount + 1}, checking for messages since ${new Date(lastCheckTime).toLocaleTimeString()}`);
       
       try {
         // Ensure we respect rate limits
@@ -112,7 +135,7 @@ export class PollingStrategy {
         attemptCount++;
 
         if (responses.length > 0) {
-          console.log(`[PollingStrategy] Found ${responses.length} responses, returning`);
+          logger.debug(`[PollingStrategy] Found ${responses.length} responses, returning`);
           return {
             responses,
             shouldStop: false,
@@ -120,11 +143,13 @@ export class PollingStrategy {
           };
         }
       } catch (error: any) {
+        logger.error('Error during polling:', error);
+        
         if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
           // Extract retry-after from error if available
           const retryAfter = error.retryAfter || 60;
           this.handleRateLimit(retryAfter);
-          console.log(`[PollingStrategy] Rate limit hit, waiting ${retryAfter}s before next attempt`);
+          logger.warn(`Rate limit hit, waiting ${retryAfter}s before next attempt`);
           // Notify user about rate limit
           await this.sendRateLimitMessage(threadTs);
           // Wait for rate limit period
@@ -146,12 +171,12 @@ export class PollingStrategy {
         // During intensive phase (first minute)
         if (elapsedSeconds < this.intensivePollingDuration) {
           waitSeconds = this.intensivePollingInterval;
-          console.log(`[PollingStrategy] Intensive polling: waiting ${waitSeconds}s (${Math.round(this.intensivePollingDuration - elapsedSeconds)}s remaining)`);
+          logger.debug(`Intensive polling: waiting ${waitSeconds}s (${Math.round(this.intensivePollingDuration - elapsedSeconds)}s remaining)`);
         } else {
           // Switch to pause phase
           inIntensivePhase = false;
           waitSeconds = this.pauseInterval;
-          console.log(`[PollingStrategy] Entering pause phase: waiting ${waitSeconds}s`);
+          logger.debug(`Entering pause phase: waiting ${waitSeconds}s`);
           await this.sendWaitingMessage(threadTs);
         }
       } else {
@@ -159,7 +184,7 @@ export class PollingStrategy {
         cycleStartTime = Date.now();
         inIntensivePhase = true;
         waitSeconds = this.intensivePollingInterval;
-        console.log(`[PollingStrategy] Restarting intensive polling cycle`);
+        logger.debug(`Restarting intensive polling cycle`);
       }
 
       // Wait for next poll
@@ -185,7 +210,7 @@ export class PollingStrategy {
         ? this.intensivePollingInterval 
         : this.pauseInterval;
       
-      console.log(`[PollingStrategy] Courtesy polling ${attemptCount + 1}, waiting ${waitSeconds}s`);
+      logger.debug(`[PollingStrategy] Courtesy polling ${attemptCount + 1}, waiting ${waitSeconds}s`);
       
       try {
         // Ensure we respect rate limits
@@ -223,24 +248,18 @@ export class PollingStrategy {
         attemptCount++;
 
         if (responses.length > 0) {
-          // Check if any response is negative (user wants to stop/change)
-          const hasNegativeResponse = responses.some(r => this.isNegativeResponse(r.response));
+          // In courtesy mode, ANY response during the monitoring period should be 
+          // passed to the LLM for interpretation. The LLM will decide if it's:
+          // - A simple acknowledgment (continue working)
+          // - A concern/cancellation that needs clarification (use send_question)
+          // - Additional instructions (adjust approach)
           
-          if (hasNegativeResponse) {
-            console.log(`[PollingStrategy] Negative response detected, stopping with requiresFeedback=true`);
-            return {
-              responses,
-              shouldStop: true,
-              requiresFeedback: true
-            };
-          }
-
-          // Non-negative response in courtesy mode
-          console.log(`[PollingStrategy] Non-negative response received, continuing`);
+          logger.debug(`[PollingStrategy] Response(s) received during courtesy period`);
           return {
             responses,
             shouldStop: false,
-            requiresFeedback: false
+            requiresFeedback: false,
+            requiresInterpretation: true  // Let the LLM decide what to do
           };
         }
       } catch (error: any) {
@@ -248,7 +267,7 @@ export class PollingStrategy {
           // Extract retry-after from error if available
           const retryAfter = error.retryAfter || 60;
           this.handleRateLimit(retryAfter);
-          console.log(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
+          logger.debug(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
           // Wait for rate limit to clear
           await this.sleep(retryAfter * 1000);
           continue;
@@ -263,7 +282,7 @@ export class PollingStrategy {
     }
 
     // No response after full cycle - continue with work
-    console.log(`[PollingStrategy] Courtesy polling completed with no response, continuing with work`);
+    logger.debug(`[PollingStrategy] Courtesy polling completed with no response, continuing with work`);
     return {
       responses: [],
       shouldStop: false,
@@ -271,20 +290,13 @@ export class PollingStrategy {
     };
   }
 
-  /**
-   * Check if response indicates user wants to stop/change course
-   */
-  private isNegativeResponse(text: string): boolean {
-    const normalizedText = text.trim().toLowerCase();
-    return this.negativePatterns.some(pattern => pattern.test(normalizedText));
-  }
 
   /**
    * Send a message indicating we're still waiting
    */
   private async sendWaitingMessage(_threadTs?: string): Promise<void> {
     // TODO: Implement progress update method in SlackClient
-    console.log('[PollingStrategy] Would send waiting message here');
+    logger.debug('[PollingStrategy] Would send waiting message here');
   }
 
   /**
@@ -292,7 +304,7 @@ export class PollingStrategy {
    */
   private async sendRateLimitMessage(_threadTs?: string): Promise<void> {
     // TODO: Implement progress update method in SlackClient
-    console.log('[PollingStrategy] Would send rate limit message here');
+    logger.debug('[PollingStrategy] Would send rate limit message here');
   }
 
   /**
@@ -309,7 +321,7 @@ export class PollingStrategy {
     // Check if we're in a rate limit retry period
     if (this.rateLimitRetryAfter > Date.now()) {
       const waitTime = this.rateLimitRetryAfter - Date.now();
-      console.log(`[PollingStrategy] In rate limit retry period, waiting ${Math.ceil(waitTime / 1000)}s`);
+      logger.debug(`[PollingStrategy] In rate limit retry period, waiting ${Math.ceil(waitTime / 1000)}s`);
       await this.sleep(waitTime);
     }
 
@@ -328,6 +340,6 @@ export class PollingStrategy {
    */
   private handleRateLimit(retryAfter: number): void {
     this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
-    console.log(`[PollingStrategy] Rate limit handled, retry after ${new Date(this.rateLimitRetryAfter).toLocaleTimeString()}`);
+    logger.debug(`[PollingStrategy] Rate limit handled, retry after ${new Date(this.rateLimitRetryAfter).toLocaleTimeString()}`);
   }
 }

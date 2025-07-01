@@ -1,6 +1,3 @@
-/**
- * Client for polling responses from Cloud Functions
- */
 export interface CloudResponse {
     user: string;
     text: string;

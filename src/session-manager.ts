@@ -3,6 +3,7 @@ import { Session, UserConfig } from './types.js';
 import { ConfigManager } from './config-manager.js';
 import { PollingManager } from './polling-manager.js';
 import { HealthMonitor } from './health-monitor.js';
+import { logger } from './logger.js';
 
 export class SessionManager {
   private configManager: ConfigManager;
@@ -213,14 +214,14 @@ export class SessionManager {
     }
 
     manager.startPolling();
-    console.log(`[SessionManager] Started polling for session ${sessionId}`);
+    logger.debug(`[SessionManager] Started polling for session ${sessionId}`);
   }
 
   stopPolling(sessionId: string): void {
     const manager = this.pollingManagers.get(sessionId);
     if (manager) {
       manager.stopPolling();
-      console.log(`[SessionManager] Stopped polling for session ${sessionId}`);
+      logger.debug(`[SessionManager] Stopped polling for session ${sessionId}`);
     }
   }
 
@@ -241,7 +242,7 @@ export class SessionManager {
       const session = await this.configManager.getSession(sessionId);
       if (session?.pollingConfig?.autoStart) {
         // Will be started by the caller with appropriate callback
-        console.log(`[SessionManager] Mode set to ${mode}, polling will be started by caller`);
+        logger.debug(`[SessionManager] Mode set to ${mode}, polling will be started by caller`);
       }
     }
   }
@@ -284,14 +285,14 @@ export class SessionManager {
     }
 
     monitor.startMonitoring();
-    console.log(`[SessionManager] Started health monitoring for session ${sessionId}`);
+    logger.debug(`[SessionManager] Started health monitoring for session ${sessionId}`);
   }
 
   stopHealthMonitoring(sessionId: string): void {
     const monitor = this.healthMonitors.get(sessionId);
     if (monitor) {
       monitor.stopMonitoring();
-      console.log(`[SessionManager] Stopped health monitoring for session ${sessionId}`);
+      logger.debug(`[SessionManager] Stopped health monitoring for session ${sessionId}`);
     }
   }
 

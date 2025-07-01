@@ -6,6 +6,8 @@ export interface PollingResult {
     responses: FeedbackResponse[];
     shouldStop: boolean;
     requiresFeedback?: boolean;
+    requiresInterpretation?: boolean;
+    timedOut?: boolean;
 }
 export declare class PollingStrategy {
     private slackClient;
@@ -22,12 +24,15 @@ export declare class PollingStrategy {
     private readonly minPollingInterval;
     private lastApiCallTime;
     private rateLimitRetryAfter;
-    private readonly negativePatterns;
     constructor(slackClient: SlackClient, sessionId: string, mode: PollingMode, useCloudPolling?: boolean, cloudClient?: CloudPollingClient | undefined);
     /**
      * Execute polling strategy based on mode
      */
     execute(threadTs?: string): Promise<PollingResult>;
+    /**
+     * Execute polling with timeout (for send_question)
+     */
+    executeWithTimeout(threadTs: string, timeoutSeconds: number): Promise<PollingResult>;
     /**
      * Feedback required mode - polls indefinitely until response
      */
@@ -36,10 +41,6 @@ export declare class PollingStrategy {
      * Courtesy inform mode - polls for a limited time to check if user wants to change course
      */
     private executeCourtesyPolling;
-    /**
-     * Check if response indicates user wants to stop/change course
-     */
-    private isNegativeResponse;
     /**
      * Send a message indicating we're still waiting
      */

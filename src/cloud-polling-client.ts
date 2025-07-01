@@ -1,6 +1,7 @@
 /**
  * Client for polling responses from Cloud Functions
  */
+import { logger } from './logger.js';
 
 export interface CloudResponse {
   user: string;
@@ -40,6 +41,7 @@ export class CloudPollingClient {
     const since = this.lastTimestamp.get(key) || 0;
     
     const url = `${this.cloudFunctionUrl}${endpoint}?since=${since}`;
+    logger.debug(`Polling cloud function: ${url}`);
     
     try {
       const response = await fetch(url, {
@@ -50,7 +52,9 @@ export class CloudPollingClient {
       });
 
       if (!response.ok) {
-        throw new Error(`Cloud function returned ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        logger.error(`Cloud function error: ${response.status} - ${errorText}`);
+        throw new Error(`Cloud function returned ${response.status}: ${errorText}`);
       }
 
       const data = await response.json() as PollResponseData;
@@ -62,7 +66,7 @@ export class CloudPollingClient {
       
       return data.responses || [];
     } catch (error) {
-      console.error(`[CloudPollingClient] Error polling responses:`, error);
+      logger.error('Error polling responses:', error);
       return [];
     }
   }
@@ -76,7 +80,7 @@ export class CloudPollingClient {
       const data = await response.json() as { status: string };
       return data.status === 'healthy';
     } catch (error) {
-      console.error('[CloudPollingClient] Health check failed:', error);
+      logger.error('Health check failed:', error);
       return false;
     }
   }
@@ -102,7 +106,7 @@ export class CloudPollingClient {
       const data = await response.json() as { messages: CloudResponse[], count: number };
       return data.messages || [];
     } catch (error) {
-      console.error(`[CloudPollingClient] Error polling channel messages:`, error);
+      logger.error(`[CloudPollingClient] Error polling channel messages:`, error);
       return [];
     }
   }
@@ -125,7 +129,7 @@ export class CloudPollingClient {
       }
       keysToDelete.forEach(key => this.lastTimestamp.delete(key));
     } catch (error) {
-      console.error(`[CloudPollingClient] Error clearing session:`, error);
+      logger.error(`[CloudPollingClient] Error clearing session:`, error);
     }
   }
 }

@@ -8,7 +8,7 @@ import { SlackClient } from './slack-client.js';
 import { TunnelManager } from './tunnel-manager.js';
 import { WebhookServer } from './webhook-server.js';
 import { PollingStrategy } from './polling-strategy.js';
-import { CloudPollingClient } from './cloud-polling-client.js';
+import { logger } from './logger.js';
 import { config } from 'dotenv';
 config();
 class SlackFeedbackMCPServer {
@@ -19,6 +19,8 @@ class SlackFeedbackMCPServer {
     tunnelManager;
     webhookServer;
     constructor() {
+        logger.info('Initializing MCP Server...');
+        logger.setupErrorHandlers();
         this.server = new Server({
             name: 'claude-mcp-slack-feedback',
             version: '1.0.0',
@@ -27,10 +29,17 @@ class SlackFeedbackMCPServer {
                 tools: {},
             },
         });
-        this.configManager = new ConfigManager();
-        this.sessionManager = new SessionManager(this.configManager);
-        this.slackClient = new SlackClient(this.configManager, this.sessionManager);
-        this.setupHandlers();
+        try {
+            this.configManager = new ConfigManager();
+            this.sessionManager = new SessionManager(this.configManager);
+            this.slackClient = new SlackClient(this.configManager, this.sessionManager);
+            logger.info('MCP Server initialized successfully');
+            this.setupHandlers();
+        }
+        catch (error) {
+            logger.error('Failed to initialize MCP Server:', error);
+            throw error;
+        }
     }
     setupHandlers() {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -54,36 +63,25 @@ class SlackFeedbackMCPServer {
                     },
                 },
                 {
-                    name: 'ask_feedback',
-                    description: 'Send a question to Slack for human feedback (waits for response)',
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            question: {
-                                type: 'string',
-                                description: 'The question to ask',
-                            },
-                            context: {
-                                type: 'string',
-                                description: 'Optional context to help the human understand the question',
-                            },
-                            options: {
-                                type: 'array',
-                                items: { type: 'string' },
-                                description: 'Optional list of suggested responses',
-                            },
-                        },
-                        required: ['question'],
-                    },
-                },
-                {
                     name: 'send_question',
-                    description: `Send a question to Slack without waiting for response.
+                    description: `Send a BLOCKING question that requires human input to proceed.
   
-Returns immediately with a question_id that can be used to check for responses later.
-The question will be posted to the configured channel with visual indicators.
+Use this when:
+- You need a decision or clarification before continuing
+- The task cannot proceed without human input
+- You're asking for approval, confirmation, or choice between options
 
-Use this when you want to continue working while waiting for a human response.`,
+DO NOT use for:
+- Progress updates or status reports (use inform_slack instead)
+- Optional feedback that won't block your work
+
+The tool automatically waits for responses with intelligent timeouts based on priority:
+- urgent: No timeout (waits indefinitely)
+- high: 30 minutes timeout
+- normal: 15 minutes timeout  
+- low: 5 minutes timeout
+
+If timeout occurs, you'll receive guidance to make your best decision and continue.`,
                     inputSchema: {
                         type: 'object',
                         properties: {
@@ -112,52 +110,6 @@ Use this when you want to continue working while waiting for a human response.`,
                             },
                         },
                         required: ['question'],
-                    },
-                },
-                {
-                    name: 'check_responses',
-                    description: `Check for responses to a previously sent question.
-
-This tool will:
-1. Check for responses in the thread
-2. Check for recent channel messages (last 2 minutes)
-3. Return all potential responses with context
-
-YOU (the LLM) should analyze the responses and decide:
-- If a channel message seems like a response to your question by considering:
-  * Timing: Messages within 30s are very likely responses
-  * Content: Does it answer or relate to your question?
-  * User: Is it from someone who typically responds?
-  * Options: Does it match suggested options?
-- Confidence level: high (certain), medium (probable), low (possible)
-- Whether to accept, ignore, or ask for clarification
-
-Channel messages include:
-- Time elapsed since your question
-- User information
-- Full message text
-
-Example analysis:
-- Question: "REST or GraphQL?"
-- Channel message (10s later): "rest" → High confidence response
-- Channel message (15s later): "hey did you see the PR?" → Low confidence, likely unrelated`,
-                    inputSchema: {
-                        type: 'object',
-                        properties: {
-                            question_id: {
-                                type: 'string',
-                                description: 'The ID returned by send_question',
-                            },
-                            include_channel: {
-                                type: 'boolean',
-                                description: 'Whether to check channel messages for potential responses (default: true)',
-                            },
-                            channel_window: {
-                                type: 'number',
-                                description: 'Seconds to look back for channel messages (max 300, default: 120)',
-                            },
-                        },
-                        required: ['question_id'],
                     },
                 },
                 {
@@ -194,7 +146,24 @@ Use reactions for lightweight communication without adding noise.`,
                 },
                 {
                     name: 'inform_slack',
-                    description: 'Send an informational message to Slack (no response required)',
+                    description: `Send a NON-BLOCKING status update or progress report.
+          
+Use this when:
+- Reporting progress or completion of tasks
+- Sharing results or findings
+- Providing status updates
+- Informing about decisions you've made
+
+IMPORTANT: This tool has a 1-minute courtesy monitoring period for user responses.
+If the user responds during this time, YOU (the LLM) will receive their message and must:
+- Analyze the tone and content (not just keywords)
+- Decide if they're expressing concern, giving new instructions, or just acknowledging
+- Use 'send_question' if clarification is needed
+- Continue working if it's just an acknowledgment
+
+The tool returns any user responses for YOUR interpretation.
+
+DO NOT use for questions that need answers to proceed.`,
                     inputSchema: {
                         type: 'object',
                         properties: {
@@ -380,16 +349,13 @@ Use reactions for lightweight communication without adding noise.`,
         }));
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
+            logger.info(`Tool called: ${name}`, { args });
             try {
                 switch (name) {
                     case 'setup_slack_config':
                         return await this.setupSlackConfig(args);
-                    case 'ask_feedback':
-                        return await this.askFeedback(args);
                     case 'send_question':
                         return await this.sendQuestion(args);
-                    case 'check_responses':
-                        return await this.checkResponses(args);
                     case 'add_reaction':
                         return await this.addReaction(args);
                     case 'inform_slack':
@@ -421,6 +387,7 @@ Use reactions for lightweight communication without adding noise.`,
                 }
             }
             catch (error) {
+                logger.error(`Tool ${name} failed:`, error);
                 if (error instanceof McpError) {
                     throw error;
                 }
@@ -442,186 +409,6 @@ Use reactions for lightweight communication without adding noise.`,
         }
         catch (error) {
             throw new McpError(ErrorCode.InvalidParams, `Failed to configure Slack: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-    async askFeedback(params) {
-        await this.ensureSession();
-        const session = await this.sessionManager.getCurrentSession();
-        if (!session) {
-            throw new McpError(ErrorCode.InternalError, 'No active session');
-        }
-        // Check if channel is set for this session
-        if (!session.channelId || session.channelId === '') {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `⚠️ No channel selected for this session!\n\nPlease first:\n1. Use 'list_channels' to see available channels\n2. Use 'set_channel' to select a channel\n\nExample: set_channel with channel "general"`,
-                    },
-                ],
-            };
-        }
-        // Check if session needs configuration
-        if (!session.sessionLabel || !session.sessionContact) {
-            const suggestedLabel = SessionManager.extractSessionLabelFromPath();
-            let configMessage = `⚠️ Session needs configuration before sending feedback:\n\n`;
-            if (!session.sessionLabel) {
-                configMessage += `📝 **Session Label**: Not set\n`;
-                configMessage += `   Suggested: "${suggestedLabel}"\n`;
-                configMessage += `   Use: set_session_label with label "${suggestedLabel}"\n\n`;
-            }
-            if (!session.sessionContact) {
-                configMessage += `👤 **Contact**: Not set\n`;
-                configMessage += `   Use: set_session_contact with contact "jorge" (or "here" for @here)\n\n`;
-            }
-            configMessage += `These settings help identify your session in Slack and notify the right people.`;
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: configMessage,
-                    },
-                ],
-            };
-        }
-        const request = {
-            sessionId: session.sessionId,
-            question: params.question,
-            context: params.context,
-            options: params.options,
-            timestamp: Date.now()
-        };
-        const threadTs = await this.slackClient.sendFeedback(request);
-        // Get channel name if we don't have it
-        const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
-        let statusText = `✅ Question sent to Slack!\n\nSession: ${session.sessionId}\nChannel: #${channelName}\nThread: ${threadTs}\nMode: ${session.mode}`;
-        // For webhook mode, add configuration info
-        if (session.mode === 'webhook' && session.tunnelUrl) {
-            statusText += `\n\n🔗 Webhook configured: ${session.tunnelUrl}/slack/events`;
-        }
-        else if (session.mode === 'polling') {
-            statusText += `\n\n🔄 Using polling mode (checking for responses every few seconds)`;
-        }
-        statusText += `\n\n⏳ Waiting for response...`;
-        console.log(`[askFeedback] Starting feedback collection for session ${session.sessionId} in ${session.mode} mode`);
-        // Hybrid mode implementation
-        if (session.mode === 'hybrid' && session.tunnelUrl) {
-            // Set up both webhook and polling strategies
-            const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
-            const pollingStrategy = useCloudPolling
-                ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
-                : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
-            const webhookTimeout = session.hybridConfig?.webhookTimeout || 5000;
-            // Create a promise that resolves when webhook receives a response
-            const webhookPromise = new Promise((resolve) => {
-                // Store resolver for webhook callback
-                this.webhookServer?.setFeedbackResolver(session.sessionId, threadTs, resolve);
-                // Timeout for webhook
-                setTimeout(() => {
-                    this.webhookServer?.clearFeedbackResolver(session.sessionId, threadTs);
-                    resolve(null); // Timeout reached
-                }, webhookTimeout);
-            });
-            // Start polling after a short delay
-            const pollingPromise = new Promise(async (resolve) => {
-                await new Promise(resolve => setTimeout(resolve, webhookTimeout / 2)); // Wait half the webhook timeout
-                const result = await pollingStrategy.execute(threadTs);
-                resolve(result);
-            });
-            // Race between webhook and polling
-            console.log(`[askFeedback] Hybrid mode: racing webhook (${webhookTimeout}ms timeout) vs polling`);
-            const winner = await Promise.race([
-                webhookPromise.then(r => r ? { source: 'webhook', result: r } : null),
-                pollingPromise.then(r => ({ source: 'polling', result: r }))
-            ]);
-            // Clean up webhook resolver if still pending
-            this.webhookServer?.clearFeedbackResolver(session.sessionId, threadTs);
-            if (winner && winner.source === 'webhook') {
-                console.log(`[askFeedback] Webhook responded first`);
-                const result = winner.result;
-                // Record success for health monitoring
-                this.sessionManager.recordWebhookSuccess(session.sessionId);
-                // Record activity for polling manager
-                this.sessionManager.recordPollingActivity(session.sessionId);
-                // Return webhook response format (adapt as needed)
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: `✅ Feedback received via webhook!\n\n${result.response}`,
-                        },
-                    ],
-                };
-            }
-            else {
-                // Webhook failed or timed out
-                if (!winner || winner.source === 'polling') {
-                    this.sessionManager.recordWebhookFailure(session.sessionId);
-                }
-                console.log(`[askFeedback] Polling completed (webhook ${winner ? 'timed out' : 'not available'})`);
-                const result = winner?.result || await pollingStrategy.execute(threadTs);
-                if (result.shouldStop) {
-                    return {
-                        content: [
-                            {
-                                type: 'text',
-                                text: '❌ Feedback collection interrupted.',
-                            },
-                        ],
-                    };
-                }
-                // Format responses
-                const responseText = result.responses.map((r) => `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`).join('\n');
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: `✅ Feedback received${session.mode === 'hybrid' ? ' (via polling)' : ''}:\n\n${responseText}`,
-                        },
-                    ],
-                };
-            }
-        }
-        else {
-            // Standard polling mode - use cloud polling if configured
-            const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
-            const pollingStrategy = useCloudPolling
-                ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
-                : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
-            const result = await pollingStrategy.execute(threadTs);
-            console.log(`[askFeedback] Polling completed with ${result.responses.length} responses`);
-            if (result.shouldStop) {
-                return {
-                    content: [
-                        {
-                            type: 'text',
-                            text: '❌ Feedback collection interrupted.',
-                        },
-                    ],
-                };
-            }
-            // Format responses
-            const responseText = result.responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`).join('\n');
-            // Send confirmation
-            if (result.responses.length > 0 && result.responses[0].threadTs) {
-                try {
-                    const firstResponse = result.responses[0];
-                    const summary = firstResponse.response.substring(0, 100) +
-                        (firstResponse.response.length > 100 ? '...' : '');
-                    await this.slackClient.updateProgress(`✅ Recibido: "${summary}". Procesando...`, firstResponse.threadTs);
-                }
-                catch (error) {
-                    console.error('Failed to send confirmation:', error);
-                }
-            }
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `${statusText}\n\n💬 Responses received:\n${responseText}`,
-                    },
-                ],
-            };
         }
     }
     async sendQuestion(params) {
@@ -652,7 +439,7 @@ Use reactions for lightweight communication without adding noise.`,
             }
             if (!session.sessionContact) {
                 configMessage += `👤 **Contact**: Not set\n`;
-                configMessage += `   Use: set_session_contact with contact "jorge" (or "here" for @here)\n\n`;
+                configMessage += `   Use: set_session_contact with contact "juriarte" (or "here" for @here)\n\n`;
             }
             return {
                 content: [
@@ -663,6 +450,13 @@ Use reactions for lightweight communication without adding noise.`,
                 ],
             };
         }
+        // Define timeouts based on priority
+        const timeouts = {
+            urgent: 0, // No timeout - wait indefinitely
+            high: 30 * 60, // 30 minutes
+            normal: 15 * 60, // 15 minutes
+            low: 5 * 60 // 5 minutes
+        };
         // Create request with priority indicators
         const priorityEmojis = {
             low: '🟢',
@@ -672,6 +466,7 @@ Use reactions for lightweight communication without adding noise.`,
         };
         const priority = params.priority || 'normal';
         const emoji = priorityEmojis[priority];
+        const timeout = timeouts[priority];
         const request = {
             sessionId: session.sessionId,
             question: params.question,
@@ -679,37 +474,69 @@ Use reactions for lightweight communication without adding noise.`,
             options: params.options,
             timestamp: Date.now()
         };
-        // Send the question with priority indicator
+        // Add enhanced request formatting
         const enhancedRequest = {
             ...request,
-            question: `${emoji} ${request.question}${params.response_type === 'quick' ? ' (quick response ok)' : ''}`
+            priority: params.priority
         };
         const threadTs = await this.slackClient.sendFeedback(enhancedRequest);
-        // Generate question ID
-        const questionId = `${session.sessionId}:${threadTs}`;
-        // Store question metadata for later retrieval
-        this.questionMetadata.set(questionId, {
-            threadTs,
-            sessionId: session.sessionId,
-            channelId: session.channelId,
-            question: params.question,
-            priority,
-            responseType: params.response_type || 'any',
-            sentAt: Date.now()
-        });
-        // Get channel name if we don't have it
+        // Get channel name
         const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
+        let statusText = `✅ Question sent to Slack!\n\nChannel: #${channelName}\nPriority: ${priority} ${emoji}\nMode: ${session.mode}`;
+        if (timeout > 0) {
+            statusText += `\nTimeout: ${timeout / 60} minutes`;
+        }
+        else {
+            statusText += `\nTimeout: None (waiting indefinitely)`;
+        }
+        statusText += `\n\n⏳ Waiting for response...`;
+        // Start polling with timeout
+        const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
+        const pollingStrategy = useCloudPolling
+            ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
+            : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
+        const result = await pollingStrategy.executeWithTimeout(threadTs, timeout);
+        if (result.timedOut) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `${statusText}\n\n⏰ **Timeout reached** - No response received within ${timeout / 60} minutes.\n\n**You (the LLM) should:**\n- Make your best decision based on context and available information\n- Inform the user of your decision with 'inform_slack'\n- Continue with the task\n\n**Original question:** ${params.question}\n**Suggested options:** ${params.options?.join(', ') || 'None provided'}`,
+                    },
+                ],
+            };
+        }
+        if (result.responses.length > 0) {
+            const responseText = result.responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`).join('\n');
+            // Send confirmation to Slack
+            try {
+                const firstResponse = result.responses[0];
+                const summary = firstResponse.response.substring(0, 100) +
+                    (firstResponse.response.length > 100 ? '...' : '');
+                await this.slackClient.updateProgress(`✅ Received: "${summary}". Processing...`, threadTs);
+            }
+            catch (error) {
+                logger.error('Failed to send confirmation:', error);
+            }
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `${statusText}\n\n💬 **Response received:**\n${responseText}`,
+                    },
+                ],
+            };
+        }
+        // Should not reach here, but just in case
         return {
             content: [
                 {
                     type: 'text',
-                    text: `✅ Question sent!\n\n**Question ID**: ${questionId}\n**Channel**: #${channelName}\n**Priority**: ${priority} ${emoji}\n**Mode**: ${session.mode}\n\nUse 'check_responses' with this question_id to check for responses later.`,
+                    text: `${statusText}\n\n❌ Unexpected result: no timeout and no responses.`,
                 },
             ],
         };
     }
-    // Add question metadata storage
-    questionMetadata = new Map();
     async informSlack(params) {
         await this.ensureSession();
         const session = await this.sessionManager.getCurrentSession();
@@ -727,39 +554,26 @@ Use reactions for lightweight communication without adding noise.`,
                 ],
             };
         }
-        // Send informational message
-        const request = {
-            sessionId: session.sessionId,
-            question: `ℹ️ ${params.message}`,
-            context: params.context,
-            timestamp: Date.now()
-        };
-        const threadTs = await this.slackClient.sendFeedback(request);
+        // Send informational message with clear visual distinction
+        const threadTs = await this.slackClient.sendStatusUpdate(params.message, params.context);
         // Get channel name
         const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
         let statusText = `✅ Information sent to Slack!\n\nChannel: #${channelName}\nThread: ${threadTs}`;
         // Start courtesy polling
         const pollingStrategy = PollingStrategy.createCourtesyInform(this.slackClient, session.sessionId);
         const result = await pollingStrategy.execute(threadTs);
-        if (result.requiresFeedback) {
-            // User sent a negative response, switch to feedback mode
-            const feedbackText = result.responses.map(r => r.response).join(', ');
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `${statusText}\n\n⚠️ User response indicates they want to provide feedback: "${feedbackText}"\n\nPlease use 'ask_feedback' to understand their concerns.`,
-                    },
-                ],
-            };
-        }
         if (result.responses.length > 0) {
             const responseText = result.responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`).join('\n');
             return {
                 content: [
                     {
                         type: 'text',
-                        text: `${statusText}\n\n💬 Acknowledgment received:\n${responseText}`,
+                        text: `${statusText}\n\n💬 User response received during monitoring period:\n${responseText}\n\n` +
+                            `**IMPORTANT**: You (the LLM) must analyze this response and decide:\n` +
+                            `- If it's a simple acknowledgment → Continue with your tasks\n` +
+                            `- If it expresses concern/cancellation (like "NOOO", "wait", "stop") → Use 'send_question' to clarify what the user wants\n` +
+                            `- If it provides new instructions → Adjust your approach accordingly\n\n` +
+                            `The user's message context and tone are more important than specific keywords.`,
                     },
                 ],
             };
@@ -783,129 +597,6 @@ Use reactions for lightweight communication without adding noise.`,
                     text: `✅ Progress update sent to thread ${params.threadTs}`,
                 },
             ],
-        };
-    }
-    async checkResponses(params) {
-        // Get question metadata
-        const metadata = this.questionMetadata.get(params.question_id);
-        if (!metadata) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `❌ Question ID not found: ${params.question_id}\n\nMake sure you're using the ID returned by send_question.`,
-                    },
-                ],
-            };
-        }
-        const includeChannel = params.include_channel ?? true;
-        const channelWindow = Math.min(params.channel_window ?? 120, 300); // Max 5 minutes
-        // Get the session
-        const session = this.configManager.getSession(metadata.sessionId);
-        if (!session) {
-            throw new McpError(ErrorCode.InternalError, 'Session not found');
-        }
-        const responses = [];
-        // 1. Check thread responses
-        try {
-            // Use cloud polling if available
-            if (process.env.CLOUD_FUNCTION_URL) {
-                const cloudClient = new CloudPollingClient(process.env.CLOUD_FUNCTION_URL);
-                const threadResponses = await cloudClient.pollResponses(metadata.threadTs, metadata.threadTs);
-                threadResponses.forEach(r => {
-                    responses.push({
-                        type: 'thread',
-                        user: r.user,
-                        text: r.text,
-                        timestamp: r.ts,
-                        timeElapsed: 0, // Thread responses don't need elapsed time
-                    });
-                });
-            }
-        }
-        catch (error) {
-            console.error('[checkResponses] Error fetching thread responses:', error);
-        }
-        // 2. Check channel messages if requested
-        if (includeChannel && process.env.CLOUD_FUNCTION_URL) {
-            try {
-                const channelUrl = `${process.env.CLOUD_FUNCTION_URL}/channel-messages/${metadata.channelId}`;
-                const since = metadata.sentAt - (channelWindow * 1000);
-                const response = await fetch(`${channelUrl}?since=${since}`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const questionTs = parseFloat(metadata.threadTs);
-                    data.messages.forEach((msg) => {
-                        const msgTs = parseFloat(msg.ts);
-                        // Only include messages after the question
-                        if (msgTs > questionTs) {
-                            const elapsed = Math.round(msgTs - questionTs);
-                            responses.push({
-                                type: 'channel',
-                                user: msg.user,
-                                text: msg.text,
-                                timestamp: msg.ts,
-                                timeElapsed: elapsed,
-                                channel: msg.channel,
-                            });
-                        }
-                    });
-                }
-            }
-            catch (error) {
-                console.error('[checkResponses] Error fetching channel messages:', error);
-            }
-        }
-        // Format the response with context for LLM analysis
-        let responseText = `**Question**: ${metadata.question}\n`;
-        responseText += `**Asked**: ${new Date(metadata.sentAt).toLocaleTimeString()}\n`;
-        responseText += `**Priority**: ${metadata.priority}\n\n`;
-        if (responses.length === 0) {
-            responseText += '**No responses found yet.**\n\n';
-            responseText += 'Consider:\n';
-            responseText += '- Waiting a bit longer\n';
-            responseText += '- Using mark_no_response if enough time has passed\n';
-            responseText += '- Sending a follow-up message';
-        }
-        else {
-            responseText += `**Found ${responses.length} potential response(s):**\n\n`;
-            // Thread responses first
-            const threadResponses = responses.filter(r => r.type === 'thread');
-            if (threadResponses.length > 0) {
-                responseText += '📎 **Thread Responses:**\n';
-                threadResponses.forEach(r => {
-                    responseText += `• <@${r.user}>: "${r.text}"\n`;
-                });
-                responseText += '\n';
-            }
-            // Channel messages
-            const channelResponses = responses.filter(r => r.type === 'channel');
-            if (channelResponses.length > 0) {
-                responseText += '💬 **Channel Messages (analyze these for relevance):**\n';
-                channelResponses.forEach(r => {
-                    responseText += `• <@${r.user}> (${r.timeElapsed}s after): "${r.text}"\n`;
-                });
-                responseText += '\n';
-                responseText += '**Your analysis should consider:**\n';
-                responseText += '- Timing (closer = more likely)\n';
-                responseText += '- Content relevance\n';
-                responseText += '- User patterns\n';
-                responseText += '- Match with suggested options\n';
-            }
-        }
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: responseText,
-                },
-            ],
-            metadata: {
-                questionId: params.question_id,
-                responses,
-                threadTs: metadata.threadTs,
-                channelId: metadata.channelId,
-            },
         };
     }
     async addReaction(params) {
@@ -988,7 +679,7 @@ Use reactions for lightweight communication without adding noise.`,
             }
             catch (error) {
                 // Don't fail if confirmation fails
-                console.error('Failed to send confirmation:', error);
+                logger.error('Failed to send confirmation:', error);
             }
         }
         const responseText = responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] ${r.response}`).join('\n');
@@ -1126,9 +817,8 @@ Use reactions for lightweight communication without adding noise.`,
         if (!session) {
             throw new McpError(ErrorCode.InternalError, 'No active session');
         }
-        // Add @ prefix if not present and not "here"
-        const contact = params.contact === 'here' ? '@here' :
-            params.contact.startsWith('@') ? params.contact : `@${params.contact}`;
+        // Store contact without @ prefix for Slack formatting
+        const contact = params.contact.replace(/^@/, '');
         await this.sessionManager.updateSession(session.sessionId, {
             sessionContact: contact
         });
@@ -1136,7 +826,7 @@ Use reactions for lightweight communication without adding noise.`,
             content: [
                 {
                     type: 'text',
-                    text: `✅ Session contact set to: ${contact}\n\nThis contact will be mentioned in all Slack messages from this session.`,
+                    text: `✅ Session contact set to: @${contact}\n\nThis contact will be mentioned in all Slack messages from this session.`,
                 },
             ],
         };
@@ -1248,37 +938,43 @@ Use reactions for lightweight communication without adding noise.`,
         };
     }
     async ensureSession() {
-        if (!this.slackClient.isConfigured()) {
-            throw new McpError(ErrorCode.InvalidRequest, 'Slack not configured. Please use setup_slack_config first.');
-        }
-        let session = await this.sessionManager.getCurrentSession();
-        if (!session) {
-            // Detect user and create session
-            const user = await this.slackClient.detectUser();
-            session = await this.sessionManager.createSession(user);
-            // Don't create a channel automatically - user must select one
-            // Default to polling mode unless cloudflared is available
-            const cloudflaredAvailable = await TunnelManager.isAvailable();
-            if (cloudflaredAvailable) {
-                // Try to setup webhook with cloudflared
-                try {
-                    await this.setupWebhook(session.sessionId, session.port);
-                    await this.sessionManager.setSessionMode(session.sessionId, 'hybrid');
-                    // Start health monitoring for hybrid mode
-                    this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
-                    console.log(`[Session ${session.sessionId}] Hybrid mode enabled (webhook + polling backup with health monitoring)`);
+        try {
+            if (!this.slackClient.isConfigured()) {
+                throw new McpError(ErrorCode.InvalidRequest, 'Slack not configured. Please use setup_slack_config first.');
+            }
+            let session = await this.sessionManager.getCurrentSession();
+            if (!session) {
+                // Detect user and create session
+                const user = await this.slackClient.detectUser();
+                session = await this.sessionManager.createSession(user);
+                // Don't create a channel automatically - user must select one
+                // Default to polling mode unless cloudflared is available
+                const cloudflaredAvailable = await TunnelManager.isAvailable();
+                if (cloudflaredAvailable) {
+                    // Try to setup webhook with cloudflared
+                    try {
+                        await this.setupWebhook(session.sessionId, session.port);
+                        await this.sessionManager.setSessionMode(session.sessionId, 'hybrid');
+                        // Start health monitoring for hybrid mode
+                        this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
+                        logger.info(`Session ${session.sessionId}: Hybrid mode enabled (webhook + polling backup with health monitoring)`);
+                    }
+                    catch (error) {
+                        logger.error('Failed to setup webhook, falling back to polling:', error);
+                        await this.sessionManager.setSessionMode(session.sessionId, 'polling');
+                        logger.info(`Session ${session.sessionId}: Using polling mode (webhook setup failed)`);
+                    }
                 }
-                catch (error) {
-                    console.error('Failed to setup webhook, falling back to polling:', error);
+                else {
+                    // cloudflared not available, use polling mode
                     await this.sessionManager.setSessionMode(session.sessionId, 'polling');
-                    console.log(`[Session ${session.sessionId}] Using polling mode (webhook setup failed)`);
+                    logger.info(`Session ${session.sessionId}: Using polling mode (cloudflared not available)`);
                 }
             }
-            else {
-                // cloudflared not available, use polling mode
-                await this.sessionManager.setSessionMode(session.sessionId, 'polling');
-                console.log(`[Session ${session.sessionId}] Using polling mode (cloudflared not available)`);
-            }
+        }
+        catch (error) {
+            logger.error('Error in ensureSession:', error);
+            throw error;
         }
     }
     async setupWebhook(sessionId, port) {
@@ -1294,34 +990,50 @@ Use reactions for lightweight communication without adding noise.`,
         await this.sessionManager.updateSessionWebhook(sessionId, webhookUrl, tunnelUrl);
     }
     async start() {
-        await this.configManager.init();
-        await this.sessionManager.init();
-        await this.slackClient.init();
-        const transport = new StdioServerTransport();
-        await this.server.connect(transport);
-        console.error('Claude MCP Slack Feedback server started');
+        try {
+            logger.info('Starting MCP server...');
+            await this.configManager.init();
+            await this.sessionManager.init();
+            await this.slackClient.init();
+            const transport = new StdioServerTransport();
+            await this.server.connect(transport);
+            logger.info('Claude MCP Slack Feedback server started successfully');
+        }
+        catch (error) {
+            logger.error('Error starting MCP server:', error);
+            throw error;
+        }
     }
     async cleanup() {
-        if (this.webhookServer?.isRunning()) {
-            await this.webhookServer.stop();
+        try {
+            logger.info('Cleaning up resources...');
+            if (this.webhookServer?.isRunning()) {
+                await this.webhookServer.stop();
+            }
+            if (this.tunnelManager?.isRunning()) {
+                await this.tunnelManager.stop();
+            }
+            logger.close();
         }
-        if (this.tunnelManager?.isRunning()) {
-            await this.tunnelManager.stop();
+        catch (error) {
+            logger.error('Error during cleanup:', error);
         }
     }
 }
 const server = new SlackFeedbackMCPServer();
 // Handle cleanup on exit
 process.on('SIGINT', async () => {
+    logger.info('Received SIGINT signal');
     await server.cleanup();
     process.exit(0);
 });
 process.on('SIGTERM', async () => {
+    logger.info('Received SIGTERM signal');
     await server.cleanup();
     process.exit(0);
 });
 server.start().catch((error) => {
-    console.error('Failed to start server:', error);
+    logger.error('Failed to start server:', error);
     process.exit(1);
 });
 //# sourceMappingURL=index.js.map

@@ -1,6 +1,7 @@
 /**
  * Client for polling responses from Cloud Functions
  */
+import { logger } from './logger.js';
 export class CloudPollingClient {
     cloudFunctionUrl;
     lastTimestamp = new Map();
@@ -18,6 +19,7 @@ export class CloudPollingClient {
         const key = threadTs ? `${threadTs}:${threadTs}` : sessionId;
         const since = this.lastTimestamp.get(key) || 0;
         const url = `${this.cloudFunctionUrl}${endpoint}?since=${since}`;
+        logger.debug(`Polling cloud function: ${url}`);
         try {
             const response = await fetch(url, {
                 method: 'GET',
@@ -26,7 +28,9 @@ export class CloudPollingClient {
                 }
             });
             if (!response.ok) {
-                throw new Error(`Cloud function returned ${response.status}: ${await response.text()}`);
+                const errorText = await response.text();
+                logger.error(`Cloud function error: ${response.status} - ${errorText}`);
+                throw new Error(`Cloud function returned ${response.status}: ${errorText}`);
             }
             const data = await response.json();
             // Update last timestamp
@@ -36,7 +40,7 @@ export class CloudPollingClient {
             return data.responses || [];
         }
         catch (error) {
-            console.error(`[CloudPollingClient] Error polling responses:`, error);
+            logger.error('Error polling responses:', error);
             return [];
         }
     }
@@ -50,7 +54,7 @@ export class CloudPollingClient {
             return data.status === 'healthy';
         }
         catch (error) {
-            console.error('[CloudPollingClient] Health check failed:', error);
+            logger.error('Health check failed:', error);
             return false;
         }
     }
@@ -73,7 +77,7 @@ export class CloudPollingClient {
             return data.messages || [];
         }
         catch (error) {
-            console.error(`[CloudPollingClient] Error polling channel messages:`, error);
+            logger.error(`[CloudPollingClient] Error polling channel messages:`, error);
             return [];
         }
     }
@@ -95,7 +99,7 @@ export class CloudPollingClient {
             keysToDelete.forEach(key => this.lastTimestamp.delete(key));
         }
         catch (error) {
-            console.error(`[CloudPollingClient] Error clearing session:`, error);
+            logger.error(`[CloudPollingClient] Error clearing session:`, error);
         }
     }
 }

@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import { Server } from 'http';
 import { SlackClient } from './slack-client.js';
 import { FeedbackResponse } from './types.js';
+import { logger } from './logger.js';
 
 interface SlackEvent {
   type: string;
@@ -87,7 +88,7 @@ export class WebhookServer {
           }
         }
       } catch (error) {
-        console.error('Error processing interactive payload:', error);
+        logger.error('Error processing interactive payload:', error);
       }
       
       res.sendStatus(200);
@@ -118,7 +119,7 @@ export class WebhookServer {
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(this.port, () => {
-          console.log(`Webhook server listening on port ${this.port}`);
+          logger.debug(`Webhook server listening on port ${this.port}`);
           resolve();
         });
         
@@ -155,13 +156,13 @@ export class WebhookServer {
   setFeedbackResolver(sessionId: string, threadTs: string, resolver: (response: any) => void): void {
     const key = `${sessionId}:${threadTs}`;
     this.feedbackResolvers.set(key, resolver);
-    console.log(`[WebhookServer] Set feedback resolver for ${key}`);
+    logger.debug(`[WebhookServer] Set feedback resolver for ${key}`);
   }
 
   clearFeedbackResolver(sessionId: string, threadTs: string): void {
     const key = `${sessionId}:${threadTs}`;
     this.feedbackResolvers.delete(key);
-    console.log(`[WebhookServer] Cleared feedback resolver for ${key}`);
+    logger.debug(`[WebhookServer] Cleared feedback resolver for ${key}`);
   }
 
   private resolveFeedback(sessionId: string, threadTs: string, response: any): void {
@@ -170,7 +171,7 @@ export class WebhookServer {
     if (resolver) {
       resolver(response);
       this.feedbackResolvers.delete(key);
-      console.log(`[WebhookServer] Resolved feedback for ${key}`);
+      logger.debug(`[WebhookServer] Resolved feedback for ${key}`);
     }
   }
 }

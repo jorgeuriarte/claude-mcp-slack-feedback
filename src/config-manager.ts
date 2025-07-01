@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { ConfigData, SlackConfig, UserConfig, Session } from './types.js';
+import { logger } from './logger.js';
 
 export class ConfigManager {
   private configPath: string;
@@ -22,7 +23,7 @@ export class ConfigManager {
       await this.ensureConfigDir();
       await this.loadConfig();
     } catch (error) {
-      console.error('Error initializing config:', error);
+      logger.error('Error initializing config:', error);
       await this.saveConfig();
     }
   }
@@ -50,7 +51,7 @@ export class ConfigManager {
         })) || []
       };
     } catch (error) {
-      console.log('No existing config found, creating new one');
+      logger.debug('No existing config found, creating new one');
     }
   }
 

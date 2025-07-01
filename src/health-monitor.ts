@@ -1,6 +1,7 @@
 import { Session } from './types.js';
 import { WebhookServer } from './webhook-server.js';
 import { SessionManager } from './session-manager.js';
+import { logger } from './logger.js';
 
 export class HealthMonitor {
   private healthCheckInterval: NodeJS.Timeout | null = null;
@@ -29,7 +30,7 @@ export class HealthMonitor {
     
     const checkInterval = this.session.hybridConfig?.healthCheckInterval || 300000; // 5 minutes
     
-    console.log(`[HealthMonitor] Starting health checks every ${checkInterval}ms for session ${this.session.sessionId}`);
+    logger.debug(`[HealthMonitor] Starting health checks every ${checkInterval}ms for session ${this.session.sessionId}`);
     
     this.healthCheckInterval = setInterval(async () => {
       await this.checkWebhookHealth();
@@ -48,7 +49,7 @@ export class HealthMonitor {
       this.healthCheckInterval = null;
     }
     this.failureCount.clear();
-    console.log(`[HealthMonitor] Stopped monitoring for session ${this.session.sessionId}`);
+    logger.debug(`[HealthMonitor] Stopped monitoring for session ${this.session.sessionId}`);
   }
   
   /**
@@ -58,12 +59,12 @@ export class HealthMonitor {
     const count = (this.failureCount.get(sessionId) || 0) + 1;
     this.failureCount.set(sessionId, count);
     
-    console.log(`[HealthMonitor] Webhook failure #${count} for session ${sessionId}`);
+    logger.debug(`[HealthMonitor] Webhook failure #${count} for session ${sessionId}`);
     
     const maxFailures = this.session.hybridConfig?.fallbackAfterFailures || 3;
     
     if (count >= maxFailures) {
-      console.log(`[HealthMonitor] Max failures reached, switching to polling mode`);
+      logger.debug(`[HealthMonitor] Max failures reached, switching to polling mode`);
       this.switchToPollingMode();
     }
   }
@@ -73,7 +74,7 @@ export class HealthMonitor {
    */
   recordWebhookSuccess(sessionId: string): void {
     this.failureCount.delete(sessionId);
-    console.log(`[HealthMonitor] Webhook success for session ${sessionId}, resetting failure count`);
+    logger.debug(`[HealthMonitor] Webhook success for session ${sessionId}, resetting failure count`);
   }
   
   /**
@@ -81,7 +82,7 @@ export class HealthMonitor {
    */
   private async checkWebhookHealth(): Promise<void> {
     if (!this.webhookServer?.isRunning()) {
-      console.log('[HealthMonitor] Webhook server not running');
+      logger.debug('[HealthMonitor] Webhook server not running');
       this.recordWebhookFailure(this.session.sessionId);
       return;
     }
@@ -101,17 +102,17 @@ export class HealthMonitor {
       if (response.ok) {
         const data = await response.json() as { sessionId: string };
         if (data.sessionId === this.session.sessionId) {
-          console.log('[HealthMonitor] Webhook health check passed');
+          logger.debug('[HealthMonitor] Webhook health check passed');
           this.recordWebhookSuccess(this.session.sessionId);
           return;
         }
       }
       
-      console.log('[HealthMonitor] Webhook health check failed - invalid response');
+      logger.debug('[HealthMonitor] Webhook health check failed - invalid response');
       this.recordWebhookFailure(this.session.sessionId);
       
     } catch (error) {
-      console.error('[HealthMonitor] Webhook health check error:', error);
+      logger.error('[HealthMonitor] Webhook health check error:', error);
       this.recordWebhookFailure(this.session.sessionId);
     }
   }
@@ -122,12 +123,12 @@ export class HealthMonitor {
   private async switchToPollingMode(): Promise<void> {
     try {
       await this.sessionManager.setSessionMode(this.session.sessionId, 'polling');
-      console.log(`[HealthMonitor] Successfully switched session ${this.session.sessionId} to polling mode`);
+      logger.debug(`[HealthMonitor] Successfully switched session ${this.session.sessionId} to polling mode`);
       
       // Stop monitoring since we're no longer in hybrid mode
       this.stopMonitoring();
     } catch (error) {
-      console.error('[HealthMonitor] Failed to switch to polling mode:', error);
+      logger.error('[HealthMonitor] Failed to switch to polling mode:', error);
     }
   }
 }

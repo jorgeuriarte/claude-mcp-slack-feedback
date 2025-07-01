@@ -1,3 +1,4 @@
+import { logger } from './logger.js';
 export class PollingManager {
     intervals = {
         initial: 2000, // 2 seconds initial
@@ -32,10 +33,10 @@ export class PollingManager {
      */
     startPolling() {
         if (this.isPolling) {
-            console.log('[PollingManager] Already polling, skipping start');
+            logger.debug('[PollingManager] Already polling, skipping start');
             return;
         }
-        console.log(`[PollingManager] Starting automatic polling for session ${this.session.sessionId}`);
+        logger.debug(`[PollingManager] Starting automatic polling for session ${this.session.sessionId}`);
         this.isPolling = true;
         this.scheduleNextPoll();
     }
@@ -43,7 +44,7 @@ export class PollingManager {
      * Stop automatic polling
      */
     stopPolling() {
-        console.log(`[PollingManager] Stopping polling for session ${this.session.sessionId}`);
+        logger.debug(`[PollingManager] Stopping polling for session ${this.session.sessionId}`);
         this.isPolling = false;
         if (this.timerId) {
             clearTimeout(this.timerId);
@@ -57,7 +58,7 @@ export class PollingManager {
         this.lastActivity = Date.now();
         // If we're in idle mode, speed up polling again
         if (this.currentInterval > this.intervals.normal) {
-            console.log('[PollingManager] Activity detected, increasing poll frequency');
+            logger.debug('[PollingManager] Activity detected, increasing poll frequency');
             this.currentInterval = this.intervals.initial;
             // Reschedule if we're currently waiting
             if (this.isPolling && this.timerId) {
@@ -92,13 +93,13 @@ export class PollingManager {
             // No recent activity: gradually increase interval
             this.currentInterval = Math.min(this.currentInterval * 1.5, this.intervals.max);
         }
-        console.log(`[PollingManager] Next poll in ${this.currentInterval}ms`);
+        logger.debug(`[PollingManager] Next poll in ${this.currentInterval}ms`);
         this.timerId = setTimeout(async () => {
             try {
                 await this.pollCallback();
             }
             catch (error) {
-                console.error('[PollingManager] Poll callback error:', error);
+                logger.error('[PollingManager] Poll callback error:', error);
             }
             // Schedule next poll
             this.scheduleNextPoll();
