@@ -1,21 +1,8 @@
 #!/usr/bin/env node
 
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { spawn } from 'child_process';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Always run with tsx from source - this ensures it works from npm install
-const srcPath = join(__dirname, '..', 'src', 'index.ts');
-
-// Use tsx to run TypeScript directly
-const child = spawn('node', ['--import', 'tsx', srcPath], {
-  stdio: 'inherit',
-  env: { ...process.env, NODE_OPTIONS: '--import tsx' }
-});
-
-child.on('exit', (code) => {
-  process.exit(code || 0);
+// Simple launcher for the compiled code
+import('../dist/index.js').catch(err => {
+  console.error('Error: Failed to start claude-mcp-slack-feedback');
+  console.error(err.message);
+  process.exit(1);
 });

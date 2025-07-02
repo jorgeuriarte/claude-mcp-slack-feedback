@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { execSync } from 'child_process';
+const { existsSync, readFileSync, writeFileSync, mkdirSync } = require('fs');
+const { join } = require('path');
+const { homedir } = require('os');
+const { execSync } = require('child_process');
 
 console.log('🤖 Claude MCP Slack Feedback Installer for Claude Code\n');
 
@@ -57,57 +57,61 @@ if (config.mcp.servers['claude-mcp-slack-feedback']) {
   console.log('⚠️  claude-mcp-slack-feedback is already configured');
   console.log('   Current command:', config.mcp.servers['claude-mcp-slack-feedback'].command);
   
-  const readline = await import('readline');
+  const readline = require('readline');
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
   
-  const answer = await new Promise(resolve => {
-    rl.question('Do you want to update the configuration? (y/n) ', resolve);
+  rl.question('Do you want to update the configuration? (y/n) ', (answer) => {
+    rl.close();
+    
+    if (answer.toLowerCase() !== 'y') {
+      console.log('Installation cancelled.');
+      process.exit(0);
+    }
+    
+    continueInstallation();
   });
-  
-  rl.close();
-  
-  if (answer.toLowerCase() !== 'y') {
-    console.log('Installation cancelled.');
-    process.exit(0);
+} else {
+  continueInstallation();
+}
+
+function continueInstallation() {
+  // Get the global npm bin directory
+  let npmBin;
+  try {
+    npmBin = execSync('npm bin -g', { encoding: 'utf8' }).trim();
+  } catch (error) {
+    console.error('❌ Failed to find npm global bin directory');
+    process.exit(1);
   }
-}
 
-// Get the global npm bin directory
-let npmBin;
-try {
-  npmBin = execSync('npm bin -g', { encoding: 'utf8' }).trim();
-} catch (error) {
-  console.error('❌ Failed to find npm global bin directory');
-  process.exit(1);
-}
+  const executablePath = join(npmBin, 'claude-mcp-slack-feedback');
 
-const executablePath = join(npmBin, 'claude-mcp-slack-feedback');
+  // Add the MCP server configuration
+  config.mcp.servers['claude-mcp-slack-feedback'] = {
+    command: executablePath
+  };
 
-// Add the MCP server configuration
-config.mcp.servers['claude-mcp-slack-feedback'] = {
-  command: executablePath
-};
-
-// Write the updated config
-try {
-  writeFileSync(configPath, JSON.stringify(config, null, 2));
-  console.log('\n✅ Successfully configured Claude Code!');
-  console.log('\n📋 Configuration added:');
-  console.log(JSON.stringify(config.mcp.servers['claude-mcp-slack-feedback'], null, 2));
-  console.log('\n🚀 Next steps:');
-  console.log('1. Restart Claude Code to activate the MCP server');
-  console.log('2. Use the "setup_slack_config" tool to configure your Slack workspace');
-  console.log('\nExample:');
-  console.log('  Tool: setup_slack_config');
-  console.log('  Parameters: {');
-  console.log('    "botToken": "xoxb-your-bot-token",');
-  console.log('    "workspaceUrl": "yourteam.slack.com"');
-  console.log('  }');
-} catch (error) {
-  console.error('❌ Failed to write configuration file');
-  console.error(error);
-  process.exit(1);
+  // Write the updated config
+  try {
+    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    console.log('\n✅ Successfully configured Claude Code!');
+    console.log('\n📋 Configuration added:');
+    console.log(JSON.stringify(config.mcp.servers['claude-mcp-slack-feedback'], null, 2));
+    console.log('\n🚀 Next steps:');
+    console.log('1. Restart Claude Code to activate the MCP server');
+    console.log('2. Use the "setup_slack_config" tool to configure your Slack workspace');
+    console.log('\nExample:');
+    console.log('  Tool: setup_slack_config');
+    console.log('  Parameters: {');
+    console.log('    "botToken": "xoxb-your-bot-token",');
+    console.log('    "workspaceUrl": "yourteam.slack.com"');
+    console.log('  }');
+  } catch (error) {
+    console.error('❌ Failed to write configuration file');
+    console.error(error);
+    process.exit(1);
+  }
 }
