@@ -1,10 +1,12 @@
-# Development files
-src/
+# Development files  
 *.ts
-!*.d.ts
+!dist/*.d.ts
 tsconfig.json
 jest.config.js
 .env*
+
+# Source (we include compiled dist)
+src/
 
 # Test files
 __tests__/
@@ -13,6 +15,7 @@ coverage/
 *.test.d.ts
 
 # Documentation
+docs/
 *.md
 !README.md
 
@@ -30,8 +33,3 @@ coverage/
 # Development tools
 claude_tools/
 deploy/
-
-# Keep these
-!dist/
-!bin/
-!scripts/
