@@ -84,6 +84,9 @@ export interface MCPToolParams {
         timestamp: string;
         reaction: string;
     };
+    getRecentMessages: {
+        limit?: number;
+    };
     informSlack: {
         message: string;
         context?: string;

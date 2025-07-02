@@ -124,17 +124,20 @@ Common reactions:
 - timer_clock (⏲️): Will check back later
 - thumbsup (👍): Acknowledged
 
-Use reactions for lightweight communication without adding noise.`,
+Use reactions for lightweight communication without adding noise.
+
+⚠️ IMPORTANT: This tool requires exact message identifiers from Slack responses.
+You cannot react to messages unless you have their exact timestamp from a tool response.`,
                     inputSchema: {
                         type: 'object',
                         properties: {
                             channel: {
                                 type: 'string',
-                                description: 'Channel ID where the message is',
+                                description: 'Channel ID (e.g., "C093FLV2MK7") - NOT the channel name. Get this from tool responses.',
                             },
                             timestamp: {
                                 type: 'string',
-                                description: 'Message timestamp',
+                                description: 'Exact message timestamp from Slack (e.g., "1735823387.938429"). Must come from a tool response - cannot be guessed.',
                             },
                             reaction: {
                                 type: 'string',
@@ -142,6 +145,26 @@ Use reactions for lightweight communication without adding noise.`,
                             },
                         },
                         required: ['channel', 'timestamp', 'reaction'],
+                    },
+                },
+                {
+                    name: 'get_recent_messages',
+                    description: `Get recent messages from current channel with their timestamps.
+          
+Use this tool when you need to:
+- React to specific messages
+- Reference previous messages
+- Get exact message timestamps for reactions
+
+Returns up to 10 recent messages with their channel IDs and timestamps.`,
+                    inputSchema: {
+                        type: 'object',
+                        properties: {
+                            limit: {
+                                type: 'number',
+                                description: 'Number of messages to retrieve (default: 10, max: 20)',
+                            },
+                        },
                     },
                 },
                 {
@@ -358,6 +381,8 @@ DO NOT use for questions that need answers to proceed.`,
                         return await this.sendQuestion(args);
                     case 'add_reaction':
                         return await this.addReaction(args);
+                    case 'get_recent_messages':
+                        return await this.getRecentMessages(args);
                     case 'inform_slack':
                         return await this.informSlack(args);
                     case 'update_progress':
@@ -599,6 +624,29 @@ DO NOT use for questions that need answers to proceed.`,
             ],
         };
     }
+    async getRecentMessages(params) {
+        await this.ensureSession();
+        const session = await this.sessionManager.getCurrentSession();
+        if (!session || !session.channelId) {
+            throw new McpError(ErrorCode.InvalidRequest, 'No active session or channel. Use set_channel first.');
+        }
+        const limit = Math.min(params.limit || 10, 20);
+        try {
+            const messages = await this.slackClient.getRecentMessages(session.channelId, limit);
+            const formattedMessages = messages.map((msg, index) => `${index + 1}. ${msg.user}: ${msg.text?.substring(0, 50)}...\n   Channel: ${session.channelId}\n   Timestamp: ${msg.ts}`).join('\n\n');
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Recent messages in channel:\n\n${formattedMessages}\n\nUse these exact channel IDs and timestamps with the add_reaction tool.`,
+                    },
+                ],
+            };
+        }
+        catch (error) {
+            throw new McpError(ErrorCode.InternalError, `Failed to get messages: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     async addReaction(params) {
         try {
             // Ensure we have a client
@@ -635,6 +683,26 @@ DO NOT use for questions that need answers to proceed.`,
                             {
                                 type: 'text',
                                 text: `❌ Invalid reaction name: ${params.reaction}\n\nUse emoji names without colons, e.g., "thumbsup" not ":thumbsup:"`,
+                            },
+                        ],
+                    };
+                }
+                else if (error.message.includes('message_not_found')) {
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text: `❌ Message not found\n\nThe timestamp "${params.timestamp}" doesn't match any message in channel ${params.channel}.\n\nTip: Use 'get_recent_messages' to get valid message timestamps.`,
+                            },
+                        ],
+                    };
+                }
+                else if (error.message.includes('channel_not_found')) {
+                    return {
+                        content: [
+                            {
+                                type: 'text',
+                                text: `❌ Channel not found\n\nThe channel ID "${params.channel}" is invalid.\n\nTip: Use 'get_recent_messages' to get the correct channel ID.`,
                             },
                         ],
                     };

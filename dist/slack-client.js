@@ -419,6 +419,16 @@ export class SlackClient {
             name: reaction
         }));
     }
+    async getRecentMessages(channel, limit = 10) {
+        if (!this.client) {
+            throw new Error('Slack client not initialized');
+        }
+        const result = await this.retryWithBackoff(() => this.client.conversations.history({
+            channel,
+            limit
+        }));
+        return result.messages || [];
+    }
     async sendStatusUpdate(message, context) {
         if (!this.client) {
             throw new Error('Slack client not configured');

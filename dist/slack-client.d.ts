@@ -42,6 +42,7 @@ export declare class SlackClient {
     getSession(sessionId: string): Promise<any>;
     hasValidToken(): boolean;
     addReaction(channel: string, timestamp: string, reaction: string): Promise<void>;
+    getRecentMessages(channel: string, limit?: number): Promise<any[]>;
     sendStatusUpdate(message: string, context?: string): Promise<string>;
 }
 //# sourceMappingURL=slack-client.d.ts.map
