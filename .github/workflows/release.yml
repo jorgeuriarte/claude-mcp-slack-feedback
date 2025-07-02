@@ -1,0 +1,77 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build project
+      run: npm run build
+    
+    - name: Create tarball
+      run: npm pack
+    
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+    
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: |
+          ## Installation
+
+          Download and install the package:
+          ```bash
+          curl -L https://github.com/jorgeuriarte/claude-mcp-slack-feedback/releases/download/${{ github.ref_name }}/claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz -o claude-mcp-slack-feedback.tgz
+          npm install -g ./claude-mcp-slack-feedback.tgz
+          claude-mcp-slack-feedback-install
+          ```
+
+          See [README](https://github.com/jorgeuriarte/claude-mcp-slack-feedback#readme) for full documentation.
+        draft: false
+        prerelease: false
+    
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
+        asset_name: claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
+        asset_content_type: application/gzip
+    
+    - name: Upload Latest Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
+        asset_name: claude-mcp-slack-feedback.tgz
+        asset_content_type: application/gzip
