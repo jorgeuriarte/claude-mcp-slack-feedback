@@ -15,11 +15,16 @@ A Model Context Protocol (MCP) server that enables Claude Code to request human 
 
 ### For Claude Code
 
-#### Option 1: Automatic Installation (Recommended)
+#### Option 1: Install from Release (Recommended)
 
 ```bash
-# Install and configure automatically
-npm install -g github:jorgeuriarte/claude-mcp-slack-feedback#feature/hybrid-architecture
+# Download the latest release tarball
+curl -L https://github.com/jorgeuriarte/claude-mcp-slack-feedback/releases/latest/download/claude-mcp-slack-feedback.tgz -o claude-mcp-slack-feedback.tgz
+
+# Install globally
+npm install -g ./claude-mcp-slack-feedback.tgz
+
+# Run the automatic installer
 claude-mcp-slack-feedback-install
 
 # The installer will:
@@ -28,15 +33,18 @@ claude-mcp-slack-feedback-install
 # - Show you the next steps
 ```
 
-#### Option 2: Manual npm install from Git
+#### Option 2: Build and Install from Source
 
-1. **Install globally from Git:**
+**Note**: Direct installation from GitHub with `npm install -g github:...` currently has issues due to npm creating broken symlinks. Use Option 1 or build from source as shown below.
+
+1. **Clone and build locally:**
    ```bash
-   # For the latest stable version:
-   npm install -g github:jorgeuriarte/claude-mcp-slack-feedback
-   
-   # Or for the development version:
-   npm install -g github:jorgeuriarte/claude-mcp-slack-feedback#feature/hybrid-architecture
+   git clone https://github.com/jorgeuriarte/claude-mcp-slack-feedback.git
+   cd claude-mcp-slack-feedback
+   npm install
+   npm run build
+   npm pack
+   npm install -g ./claude-mcp-slack-feedback-*.tgz
    ```
 
 2. **Configure Claude Code:**
