@@ -1,0 +1,37 @@
+# Development files
+src/
+*.ts
+!*.d.ts
+tsconfig.json
+jest.config.js
+.env*
+
+# Test files
+__tests__/
+coverage/
+*.test.js
+*.test.d.ts
+
+# Documentation
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# CI/CD
+.github/
+
+# Development tools
+claude_tools/
+deploy/
+
+# Keep these
+!dist/
+!bin/
+!scripts/

@@ -5,7 +5,7 @@
   "type": "module",
   "bin": {
     "claude-mcp-slack-feedback": "./bin/claude-mcp-slack-feedback",
-    "claude-mcp-slack-feedback-install": "./scripts/install-claude-code.js"
+    "claude-mcp-slack-feedback-install": "./scripts/install-claude-code.cjs"
   },
   "scripts": {
     "build": "tsc",
