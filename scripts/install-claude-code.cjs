@@ -81,9 +81,12 @@ function continueInstallation() {
   // Get the global npm bin directory
   let npmBin;
   try {
-    npmBin = execSync('npm bin -g', { encoding: 'utf8' }).trim();
+    // npm bin -g is deprecated, use npm prefix -g instead
+    const npmPrefix = execSync('npm prefix -g', { encoding: 'utf8' }).trim();
+    npmBin = join(npmPrefix, 'bin');
   } catch (error) {
     console.error('❌ Failed to find npm global bin directory');
+    console.error('Error:', error.message);
     process.exit(1);
   }
 
