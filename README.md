@@ -13,25 +13,39 @@ A Model Context Protocol (MCP) server that enables Claude Code to request human 
 
 ## Installation
 
-### Quick Install
-
-```bash
-git clone https://github.com/yourusername/claude-mcp-slack-feedback.git
-cd claude-mcp-slack-feedback
-./scripts/install.sh
-```
-
-The installer will:
-- Check Node.js version (18+ required)
-- Build the project
-- Configure Claude Desktop automatically
-- Optionally suggest installing cloudflared for webhook support
-
-### Manual Installation
+### For Claude Code
 
 1. **Clone and build:**
    ```bash
-   git clone https://github.com/yourusername/claude-mcp-slack-feedback.git
+   git clone https://github.com/jorgeuriarte/claude-mcp-slack-feedback.git
+   cd claude-mcp-slack-feedback
+   npm install
+   npm run build
+   ```
+
+2. **Configure Claude Code:**
+   
+   Add to your Claude Code settings file:
+   ```json
+   {
+     "mcp": {
+       "servers": {
+         "claude-mcp-slack-feedback": {
+           "command": "node",
+           "args": ["/absolute/path/to/claude-mcp-slack-feedback/dist/index.js"]
+         }
+       }
+     }
+   }
+   ```
+
+3. **Start a new Claude Code session** to activate the MCP server.
+
+### For Claude Desktop
+
+1. **Clone and build:**
+   ```bash
+   git clone https://github.com/jorgeuriarte/claude-mcp-slack-feedback.git
    cd claude-mcp-slack-feedback
    npm install
    npm run build
