@@ -24,12 +24,6 @@
   "author": "Jorge Uriarte",
   "license": "MIT",
   "description": "MCP server for Claude Code to request human feedback through Slack",
-  "files": [
-    "dist/",
-    "bin/",
-    "scripts/",
-    "README.md"
-  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.2",
     "@slack/web-api": "^7.9.3",
