@@ -34,20 +34,17 @@ jobs:
       id: version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
     
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create Release with Assets
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
+        name: Release ${{ github.ref }}
         body: |
           ## Installation
 
           Download and install the package:
           ```bash
-          curl -L https://github.com/jorgeuriarte/claude-mcp-slack-feedback/releases/download/${{ github.ref_name }}/claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz -o claude-mcp-slack-feedback.tgz
+          curl -L https://github.com/jorgeuriarte/claude-mcp-slack-feedback/releases/download/${{ github.ref_name }}/claude-mcp-slack-feedback.tgz -o claude-mcp-slack-feedback.tgz
           npm install -g ./claude-mcp-slack-feedback.tgz
           claude-mcp-slack-feedback-install
           ```
@@ -55,23 +52,14 @@ jobs:
           See [README](https://github.com/jorgeuriarte/claude-mcp-slack-feedback#readme) for full documentation.
         draft: false
         prerelease: false
-    
-    - name: Upload Release Asset
-      uses: actions/upload-release-asset@v1
+        files: |
+          claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
-        asset_name: claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
-        asset_content_type: application/gzip
     
-    - name: Upload Latest Asset
-      uses: actions/upload-release-asset@v1
+    - name: Copy and Upload Latest Version
+      run: |
+        cp claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz claude-mcp-slack-feedback.tgz
+        gh release upload ${{ github.ref_name }} claude-mcp-slack-feedback.tgz --clobber
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
-        asset_name: claude-mcp-slack-feedback.tgz
-        asset_content_type: application/gzip
