@@ -988,7 +988,7 @@ DO NOT use for:
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.3.1'
+      version: '1.3.4'
     };
     const buildTime = new Date().toISOString();
     
@@ -996,7 +996,7 @@ DO NOT use for:
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.1:\n- cloudflared is now optional (defaults to polling mode)\n- Automatic detection of cloudflared availability\n- Improved fallback to polling when webhook setup fails\n\n✨ v1.3.0:\n- Visual session identification with emojis and labels\n- New set_session_label tool for custom naming\n- Rich Slack blocks formatting\n\n✨ v1.2.1:\n- Bot attempts to auto-join public channels\n- Better error messages when not channel member`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.3:\n- New send_simple_update tool for brief messages\n- Improved tool descriptions with usage guidelines\n- Enhanced message capture outside threads\n- Fixed GitHub Action for automatic releases\n\n✨ v1.3.2:\n- (Skipped - build issues)\n\n✨ v1.3.1:\n- cloudflared is now optional (defaults to polling mode)\n- Automatic detection of cloudflared availability\n- Improved fallback to polling when webhook setup fails`,
         },
       ],
     };
