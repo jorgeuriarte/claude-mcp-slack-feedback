@@ -11,8 +11,8 @@ import {
 import { ConfigManager } from './config-manager.js';
 import { SessionManager } from './session-manager.js';
 import { SlackClient } from './slack-client.js';
-import { TunnelManager } from './tunnel-manager.js';
-import { WebhookServer } from './webhook-server.js';
+// import { TunnelManager } from './tunnel-manager.js';  // Not needed - webhooks handled by Cloud Run
+// import { WebhookServer } from './webhook-server.js';  // Not needed - webhooks handled by Cloud Run
 import { PollingStrategy } from './polling-strategy.js';
 import { MCPToolParams, FeedbackRequest } from './types.js';
 import { logger } from './logger.js';
@@ -25,8 +25,8 @@ class SlackFeedbackMCPServer {
   private configManager: ConfigManager;
   private sessionManager: SessionManager;
   private slackClient: SlackClient;
-  private tunnelManager?: TunnelManager;
-  private webhookServer?: WebhookServer;
+  // private tunnelManager?: TunnelManager;  // Not needed - webhooks handled by Cloud Run
+  // private webhookServer?: WebhookServer;  // Not needed - webhooks handled by Cloud Run
 
   constructor() {
     logger.info('Initializing MCP Server...');
@@ -988,7 +988,7 @@ DO NOT use for:
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.3.4'
+      version: '1.4.0'
     };
     const buildTime = new Date().toISOString();
     
@@ -996,7 +996,7 @@ DO NOT use for:
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.3.3:\n- New send_simple_update tool for brief messages\n- Improved tool descriptions with usage guidelines\n- Enhanced message capture outside threads\n- Fixed GitHub Action for automatic releases\n\n✨ v1.3.2:\n- (Skipped - build issues)\n\n✨ v1.3.1:\n- cloudflared is now optional (defaults to polling mode)\n- Automatic detection of cloudflared availability\n- Improved fallback to polling when webhook setup fails`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.0:\n- Removed local tunnel creation (cloudflared)\n- All communication now uses Cloud Run architecture\n- Fixed "Error creating tunnel" issues\n- Simplified to always use polling mode locally\n\n✨ v1.3.4:\n- Fixed version display showing outdated information\n- Added project-specific .claude/slack-config.json support\n\n✨ v1.3.3:\n- New send_simple_update tool for brief messages\n- Improved tool descriptions with usage guidelines\n- Enhanced message capture outside threads\n- Fixed GitHub Action for automatic releases`,
         },
       ],
     };
@@ -1244,12 +1244,12 @@ DO NOT use for:
 
     await this.sessionManager.setSessionMode(session.sessionId, params.mode);
 
-    // Update health monitoring based on new mode
-    if (params.mode === 'hybrid' && this.webhookServer) {
-      this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
-    } else {
-      this.sessionManager.stopHealthMonitoring(session.sessionId);
-    }
+    // Health monitoring not needed - webhooks are handled by Cloud Run
+    // if (params.mode === 'hybrid' && this.webhookServer) {
+    //   this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
+    // } else {
+    //   this.sessionManager.stopHealthMonitoring(session.sessionId);
+    // }
 
     return {
       content: [
@@ -1283,29 +1283,11 @@ DO NOT use for:
       
       // Don't create a channel automatically - user must select one
       
-      // Default to polling mode unless cloudflared is available
-      const cloudflaredAvailable = await TunnelManager.isAvailable();
+      // Always use polling mode - webhooks are handled by Cloud Run
+      await this.sessionManager.setSessionMode(session.sessionId, 'polling');
+      logger.info(`Session ${session.sessionId}: Using polling mode (Cloud Run architecture)`);
       
-      if (cloudflaredAvailable) {
-        // Try to setup webhook with cloudflared
-        try {
-          await this.setupWebhook(session.sessionId, session.port);
-          await this.sessionManager.setSessionMode(session.sessionId, 'hybrid');
-          
-          // Start health monitoring for hybrid mode
-          this.sessionManager.startHealthMonitoring(session.sessionId, this.webhookServer);
-          
-          logger.info(`Session ${session.sessionId}: Hybrid mode enabled (webhook + polling backup with health monitoring)`);
-        } catch (error) {
-          logger.error('Failed to setup webhook, falling back to polling:', error);
-          await this.sessionManager.setSessionMode(session.sessionId, 'polling');
-          logger.info(`Session ${session.sessionId}: Using polling mode (webhook setup failed)`);
-        }
-      } else {
-        // cloudflared not available, use polling mode
-        await this.sessionManager.setSessionMode(session.sessionId, 'polling');
-        logger.info(`Session ${session.sessionId}: Using polling mode (cloudflared not available)`);
-      }
+      // Note: Webhooks are configured between Slack and Cloud Run, not locally
     }
     } catch (error) {
       logger.error('Error in ensureSession:', error);
@@ -1313,21 +1295,22 @@ DO NOT use for:
     }
   }
 
-  private async setupWebhook(sessionId: string, port: number): Promise<void> {
-    // Initialize tunnel manager
-    this.tunnelManager = new TunnelManager(port);
-    
-    // Start tunnel (will throw if cloudflared not available)
-    const tunnelUrl = await this.tunnelManager.start();
-    
-    // Start webhook server
-    this.webhookServer = new WebhookServer(port, sessionId, this.slackClient);
-    await this.webhookServer.start();
-    
-    // Update session with webhook info
-    const webhookUrl = `http://localhost:${port}`;
-    await this.sessionManager.updateSessionWebhook(sessionId, webhookUrl, tunnelUrl);
-  }
+  // Webhook setup not needed - webhooks are handled by Cloud Run
+  // private async setupWebhook(sessionId: string, port: number): Promise<void> {
+  //   // Initialize tunnel manager
+  //   this.tunnelManager = new TunnelManager(port);
+  //   
+  //   // Start tunnel (will throw if cloudflared not available)
+  //   const tunnelUrl = await this.tunnelManager.start();
+  //   
+  //   // Start webhook server
+  //   this.webhookServer = new WebhookServer(port, sessionId, this.slackClient);
+  //   await this.webhookServer.start();
+  //   
+  //   // Update session with webhook info
+  //   const webhookUrl = `http://localhost:${port}`;
+  //   await this.sessionManager.updateSessionWebhook(sessionId, webhookUrl, tunnelUrl);
+  // }
 
   async start(): Promise<void> {
     try {
@@ -1348,12 +1331,13 @@ DO NOT use for:
   async cleanup(): Promise<void> {
     try {
       logger.info('Cleaning up resources...');
-      if (this.webhookServer?.isRunning()) {
-        await this.webhookServer.stop();
-      }
-      if (this.tunnelManager?.isRunning()) {
-        await this.tunnelManager.stop();
-      }
+      // Webhook cleanup not needed - webhooks are handled by Cloud Run
+      // if (this.webhookServer?.isRunning()) {
+      //   await this.webhookServer.stop();
+      // }
+      // if (this.tunnelManager?.isRunning()) {
+      //   await this.tunnelManager.stop();
+      // }
       logger.close();
     } catch (error) {
       logger.error('Error during cleanup:', error);

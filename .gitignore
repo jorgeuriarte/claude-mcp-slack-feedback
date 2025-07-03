@@ -45,6 +45,7 @@ coverage/
 # Config files with secrets
 config.json
 ~/.claude-mcp-slack-feedback/
+.claude/slack-config.json
 
 # Testing
 jest-results.json

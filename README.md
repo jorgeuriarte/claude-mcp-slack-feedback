@@ -10,6 +10,8 @@ A Model Context Protocol (MCP) server that enables Claude Code to request human 
 - 👥 **Multi-user support**: Multiple developers can use simultaneously
 - 🔀 **Multi-session support**: Handle multiple Claude sessions per user
 - 🚀 **Zero-configuration**: Auto-detects users and creates channels
+- 💬 **Smart messaging**: Simple updates, reactions, and structured messages
+- 🔐 **Local config support**: Store credentials in project-specific `.claude` directory
 
 ## Installation
 
@@ -178,22 +180,29 @@ In Claude, use the setup tool:
 setup_slack_config with bot token "xoxb-your-token-here"
 ```
 
-### Webhook Mode Setup (Optional - Advanced Users)
+### Architecture
 
-**By default, the bot uses polling mode which works great for most users. Webhooks are optional.**
+This MCP server uses a Cloud Run architecture for reliable message delivery:
 
-If you want real-time responses via webhooks:
+1. **Slack → Cloud Run**: Webhooks deliver messages instantly to the cloud function
+2. **MCP → Cloud Run**: Local MCP polls the cloud function for responses
 
-1. **First time using `ask_feedback`:**
-   - The system will show: `🔗 Webhook URL: https://abc123.trycloudflare.com/slack/events`
-   - Copy this URL
+This architecture provides:
+- ✅ No local tunnels or port forwarding needed
+- ✅ Works behind firewalls and corporate networks
+- ✅ Reliable message delivery
+- ✅ Automatic scaling
 
-2. **Configure Slack for webhooks:**
-   - Go to your app at https://api.slack.com/apps
-   - Select your app → "Event Subscriptions" 
+### Webhook Configuration (One-time setup)
+
+Configure your Slack app to send events to the Cloud Run endpoint:
+
+1. **Go to your Slack app configuration:**
+   - Visit https://api.slack.com/apps
+   - Select your app → "Event Subscriptions"
    - Toggle "Enable Events" to On
-   - Paste the webhook URL in "Request URL"
-   - Wait for "Verified" ✓ 
+   - Set Request URL: `https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app/slack/events`
+   - Wait for "Verified" ✓
    - Under "Subscribe to bot events", add:
      - `message.channels`
      - `message.groups` 
@@ -201,11 +210,7 @@ If you want real-time responses via webhooks:
      - `message.mpim`
    - Click "Save Changes"
 
-**Important notes about webhooks:**
-- The URL changes every session (it's a temporary tunnel)
-- You need to update Slack settings each time
-- For this reason, **polling mode is recommended for regular use**
-- Webhooks are mainly useful for testing real-time features
+**Note:** This is a one-time configuration. The Cloud Run endpoint is permanent and doesn't change between sessions.
 
 ### Asking for Feedback
 
@@ -238,9 +243,9 @@ list_sessions
    - Creates a unique session
    - Creates a Slack channel for the session
 
-2. **Communication Modes**:
-   - **Webhook Mode**: If cloudflared is installed, creates a tunnel for real-time responses
-   - **Polling Mode**: Falls back to checking Slack periodically
+2. **Communication Flow**:
+   - **Slack → Cloud Run**: Messages are instantly delivered via webhooks
+   - **MCP → Cloud Run**: Local MCP polls the cloud function for new messages
 
 3. **Channel Structure**:
    - Main channel: `#claude-username-main`
@@ -250,6 +255,7 @@ list_sessions
 
 - `CLAUDE_USER_EMAIL`: Set this to match your Slack email for automatic user detection
 - `USER` / `USERNAME`: Used as fallback for user detection
+- `CLOUD_FUNCTION_URL`: Cloud Run endpoint (defaults to production URL)
 
 ## Development
 
@@ -272,9 +278,9 @@ npm run typecheck
 - **MCP Server**: Handles Claude tool requests
 - **Session Manager**: Manages multi-user/multi-session state
 - **Slack Client**: Handles Slack API communication with rate limiting
-- **Webhook Server**: Express server for receiving Slack events
-- **Tunnel Manager**: Manages cloudflared tunnels
+- **Cloud Polling Client**: Polls Cloud Run for new messages
 - **Config Manager**: Persists configuration and sessions
+- **Cloud Run Function**: Receives webhooks from Slack and stores messages
 
 ## Troubleshooting
 
@@ -282,9 +288,9 @@ npm run typecheck
 - Set `CLAUDE_USER_EMAIL` environment variable to your Slack email
 - Ensure the bot has `users:read.email` permission
 
-### "cloudflared not installed"
-- Run the installer again and choose to install cloudflared
-- Or install manually: `brew install cloudflare/cloudflare/cloudflared`
+### "Error creating tunnel"
+- This error should no longer occur as local tunnels are not used
+- If you see this error, please update to the latest version
 
 ### "No responses received"
 - Check the Slack channel for your messages
