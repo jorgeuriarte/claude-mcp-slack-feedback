@@ -130,20 +130,26 @@ If timeout occurs, you'll receive guidance to make your best decision and contin
         },
         {
           name: 'add_reaction',
-          description: `Add an emoji reaction to any message.
+          description: `Add an emoji reaction to any message for simple acknowledgments.
   
+WHEN TO USE:
+- User sends instructions → React with 👀 (eyes) to show "processing"
+- Task completed → React with ✅ (white_check_mark) 
+- Simple acknowledgment → React with 👍 (thumbsup)
+- Considering/thinking → React with 🤔 (thinking_face)
+
 Common reactions:
-- white_check_mark (✅): Confirmed/accepted
-- eyes (👀): Seen/processing
-- thinking_face (🤔): Considering
-- question (❓): Need clarification
-- timer_clock (⏲️): Will check back later
+- eyes (👀): Processing/seen
+- white_check_mark (✅): Done/completed
 - thumbsup (👍): Acknowledged
+- thinking_face (🤔): Considering
+- hourglass (⏳): Working on it
 
-Use reactions for lightweight communication without adding noise.
+DO NOT use for:
+- Providing information → use send_simple_update
+- Complex status → use inform_slack
 
-⚠️ IMPORTANT: This tool requires exact message identifiers from Slack responses.
-You cannot react to messages unless you have their exact timestamp from a tool response.`,
+⚠️ IMPORTANT: Requires exact message timestamp from tool responses.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -185,24 +191,22 @@ Returns up to 10 recent messages with their channel IDs and timestamps.`,
         },
         {
           name: 'inform_slack',
-          description: `Send a NON-BLOCKING status update or progress report.
+          description: `Send a structured status update for important information.
           
-Use this when:
-- Reporting progress or completion of tasks
-- Sharing results or findings
-- Providing status updates
-- Informing about decisions you've made
+WHEN TO USE:
+- Major task completion
+- Important findings or results
+- Complex status requiring structure
+- Starting new major phase of work
 
-IMPORTANT: This tool has a 1-minute courtesy monitoring period for user responses.
-If the user responds during this time, YOU (the LLM) will receive their message and must:
-- Analyze the tone and content (not just keywords)
-- Decide if they're expressing concern, giving new instructions, or just acknowledging
-- Use 'send_question' if clarification is needed
-- Continue working if it's just an acknowledgment
+Creates formatted message with session info and structure.
 
-The tool returns any user responses for YOUR interpretation.
+DO NOT use for:
+- Simple acknowledgments → use add_reaction
+- Brief updates → use send_simple_update
+- Questions → use send_question
 
-DO NOT use for questions that need answers to proceed.`,
+MONITORING: Has 1-minute courtesy period. If user responds, you'll see their message.`,
           inputSchema: {
             type: 'object',
             properties: {
@@ -216,6 +220,37 @@ DO NOT use for questions that need answers to proceed.`,
               },
             },
             required: ['message'],
+          },
+        },
+        {
+          name: 'send_simple_update',
+          description: `Send a brief, unformatted status update in the thread.
+          
+Use this when:
+- Providing quick status updates
+- Confirming actions with short messages
+- Adding brief information to the conversation
+
+This sends a clean message without session labels or formatting.
+Example outputs: "ℹ️ Found 3 files", "✓ Configuration saved", "→ Processing next step"
+
+DO NOT use for:
+- Simple acknowledgments (use add_reaction instead)
+- Complex updates needing structure (use inform_slack)
+- Questions (use send_question)`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              message: {
+                type: 'string',
+                description: 'Brief update message (recommended: < 100 chars)',
+              },
+              threadTs: {
+                type: 'string',
+                description: 'Thread timestamp to update (from previous message)',
+              },
+            },
+            required: ['message', 'threadTs'],
           },
         },
         {
@@ -410,6 +445,9 @@ DO NOT use for questions that need answers to proceed.`,
           
           case 'inform_slack':
             return await this.informSlack(args as MCPToolParams['informSlack']);
+          
+          case 'send_simple_update':
+            return await this.sendSimpleUpdate(args as MCPToolParams['sendSimpleUpdate']);
           
           case 'update_progress':
             return await this.updateProgress(args as MCPToolParams['updateProgress']);
@@ -701,6 +739,42 @@ DO NOT use for questions that need answers to proceed.`,
       ],
     };
   }
+
+  private async sendSimpleUpdate(params: MCPToolParams['sendSimpleUpdate']) {
+    await this.ensureSession();
+    
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session || !session.channelId) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'No active session or channel. Use set_channel first.'
+      );
+    }
+    
+    try {
+      // Send simple message to thread without formatting
+      await this.slackClient.sendSimpleThreadMessage(
+        session.channelId,
+        params.message,
+        params.threadTs
+      );
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `✓ Update sent`,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to send update: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
 
   private async updateProgress(params: MCPToolParams['updateProgress']) {
     await this.slackClient.updateProgress(params.message, params.threadTs);

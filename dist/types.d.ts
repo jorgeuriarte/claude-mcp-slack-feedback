@@ -91,6 +91,10 @@ export interface MCPToolParams {
         message: string;
         context?: string;
     };
+    sendSimpleUpdate: {
+        message: string;
+        threadTs: string;
+    };
     updateProgress: {
         message: string;
         threadTs: string;

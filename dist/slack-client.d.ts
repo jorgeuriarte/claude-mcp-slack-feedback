@@ -43,6 +43,7 @@ export declare class SlackClient {
     hasValidToken(): boolean;
     addReaction(channel: string, timestamp: string, reaction: string): Promise<void>;
     getRecentMessages(channel: string, limit?: number): Promise<any[]>;
+    sendSimpleThreadMessage(channel: string, message: string, threadTs: string): Promise<void>;
     sendStatusUpdate(message: string, context?: string): Promise<string>;
 }
 //# sourceMappingURL=slack-client.d.ts.map

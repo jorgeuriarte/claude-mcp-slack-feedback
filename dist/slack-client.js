@@ -243,28 +243,9 @@ export class SlackClient {
         const botUserId = (await this.client.auth.test()).user_id;
         // Get the last message timestamp for this session
         const lastMessageTs = this.lastMessageTs.get(sessionId);
-        if (!lastMessageTs) {
-            // If no message has been sent yet, check channel history
-            const oldest = since ? (since / 1000).toString() : '0';
-            const history = await this.retryWithBackoff(() => this.client.conversations.history({
-                channel: session.channelId,
-                oldest,
-                limit: 100
-            }));
-            for (const msg of history.messages || []) {
-                if (msg.user && msg.user !== botUserId && !msg.bot_id) {
-                    responses.push({
-                        sessionId,
-                        response: msg.text || '',
-                        timestamp: parseFloat(msg.ts) * 1000,
-                        userId: msg.user,
-                        threadTs: msg.thread_ts || msg.ts
-                    });
-                }
-            }
-        }
-        else {
-            // Check for thread replies to our last message
+        // Strategy: Check BOTH thread replies AND channel messages
+        // 1. Check thread replies if we have a thread
+        if (lastMessageTs) {
             try {
                 logger.debug(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
                 const replies = await this.retryWithBackoff(() => this.client.conversations.replies({
@@ -291,13 +272,48 @@ export class SlackClient {
                 }
             }
             catch (error) {
-                // If thread_not_found, fall back to channel history
-                if (error.error === 'thread_not_found') {
-                    return this.pollMessages(sessionId, since);
-                }
-                throw error;
+                logger.error(`[SlackClient] Error checking thread: ${error.message}`);
             }
         }
+        // 2. ALWAYS check channel messages too (for responses outside thread)
+        const oldest = since ? (since / 1000).toString() : (lastMessageTs || '0');
+        try {
+            const history = await this.retryWithBackoff(() => this.client.conversations.history({
+                channel: session.channelId,
+                oldest,
+                limit: 50
+            }));
+            logger.debug(`[SlackClient] Found ${history.messages?.length || 0} channel messages`);
+            for (const msg of history.messages || []) {
+                // Include messages that:
+                // - Are from users (not bots)
+                // - Are NOT in a thread (no thread_ts) OR are thread parents
+                // - Mention the bot OR contain the session ID
+                if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+                    const isDirectChannelMessage = !msg.thread_ts || msg.thread_ts === msg.ts;
+                    const mentionsBot = msg.text?.includes(`<@${botUserId}>`);
+                    const containsSessionId = msg.text?.includes(session.sessionId);
+                    if (isDirectChannelMessage && (mentionsBot || containsSessionId || !lastMessageTs)) {
+                        // Avoid duplicates from thread check
+                        const isDuplicate = responses.some(r => r.timestamp === parseFloat(msg.ts) * 1000);
+                        if (!isDuplicate) {
+                            responses.push({
+                                sessionId,
+                                response: msg.text || '',
+                                timestamp: parseFloat(msg.ts) * 1000,
+                                userId: msg.user,
+                                threadTs: msg.ts // Channel messages reference themselves
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        catch (error) {
+            logger.error(`[SlackClient] Error checking channel: ${error.message}`);
+        }
+        // Sort by timestamp
+        responses.sort((a, b) => a.timestamp - b.timestamp);
         return responses;
     }
     async getChannelInfo(channelId) {
@@ -428,6 +444,18 @@ export class SlackClient {
             limit
         }));
         return result.messages || [];
+    }
+    async sendSimpleThreadMessage(channel, message, threadTs) {
+        if (!this.client) {
+            throw new Error('Slack client not configured');
+        }
+        // Send simple message without any formatting or prefixes
+        await this.retryWithBackoff(() => this.client.chat.postMessage({
+            channel,
+            text: message,
+            thread_ts: threadTs,
+            mrkdwn: true
+        }));
     }
     async sendStatusUpdate(message, context) {
         if (!this.client) {
