@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { logger } from './logger.js';
 export class TunnelManager {
     tunnelProcess;
     tunnelUrl;
@@ -33,7 +34,7 @@ export class TunnelManager {
             });
             this.tunnelProcess.stderr?.on('data', (data) => {
                 errorOutput += data.toString();
-                console.error('Cloudflared stderr:', data.toString());
+                logger.error('Cloudflared stderr:', data.toString());
                 // Cloudflared outputs the URL to stderr, not stdout
                 const urlMatch = errorOutput.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
                 if (urlMatch && !this.tunnelUrl) {

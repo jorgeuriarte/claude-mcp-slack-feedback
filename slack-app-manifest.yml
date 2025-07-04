@@ -12,9 +12,9 @@ features:
 oauth_config:
   scopes:
     bot:
-    - channels:manage
-    - channels:join
+    - channels:write
     - chat:write
+    - reactions:write
     - channels:read
     - users:read
     - users:read.email
@@ -28,6 +28,15 @@ oauth_config:
     - team:read
 
 settings:
+  event_subscriptions:
+    request_url: https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app/slack/events
+    bot_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+  interactivity:
+    is_enabled: false
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

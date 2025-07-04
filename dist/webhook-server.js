@@ -1,14 +1,18 @@
 import express from 'express';
+import { logger } from './logger.js';
 export class WebhookServer {
     app;
     server;
     port;
-    slackClient;
+    // private slackClient: SlackClient;  // Not used - webhooks handled by Cloud Run
     sessionId;
-    constructor(port, sessionId, slackClient) {
+    feedbackResolvers = new Map();
+    constructor(port, sessionId, _slackClient) {
+        // Note: slackClient parameter kept for compatibility but not used
+        // All webhook handling now done in Cloud Run
         this.port = port;
         this.sessionId = sessionId;
-        this.slackClient = slackClient;
+        // this.slackClient = slackClient;  // Not used
         this.app = express();
         this.setupRoutes();
     }
@@ -47,12 +51,16 @@ export class WebhookServer {
                             userId: user,
                             threadTs: payload.message?.ts || ''
                         };
-                        this.slackClient.addWebhookResponse(response);
+                        // this.slackClient.addWebhookResponse(response);  // Webhooks now handled by Cloud Run
+                        // If there's a resolver waiting for this response, resolve it
+                        if (payload.message?.ts) {
+                            this.resolveFeedback(this.sessionId, payload.message.ts, response);
+                        }
                     }
                 }
             }
             catch (error) {
-                console.error('Error processing interactive payload:', error);
+                logger.error('Error processing interactive payload:', error);
             }
             res.sendStatus(200);
         });
@@ -67,14 +75,18 @@ export class WebhookServer {
                 userId: event.user,
                 threadTs: event.thread_ts || event.ts || ''
             };
-            this.slackClient.addWebhookResponse(response);
+            // this.slackClient.addWebhookResponse(response);  // Webhooks now handled by Cloud Run
+            // If there's a resolver waiting for this response, resolve it
+            if (event.thread_ts) {
+                this.resolveFeedback(this.sessionId, event.thread_ts, response);
+            }
         }
     }
     async start() {
         return new Promise((resolve, reject) => {
             try {
                 this.server = this.app.listen(this.port, () => {
-                    console.log(`Webhook server listening on port ${this.port}`);
+                    logger.debug(`Webhook server listening on port ${this.port}`);
                     resolve();
                 });
                 this.server.on('error', (error) => {
@@ -104,6 +116,25 @@ export class WebhookServer {
     }
     getPort() {
         return this.port;
+    }
+    setFeedbackResolver(sessionId, threadTs, resolver) {
+        const key = `${sessionId}:${threadTs}`;
+        this.feedbackResolvers.set(key, resolver);
+        logger.debug(`[WebhookServer] Set feedback resolver for ${key}`);
+    }
+    clearFeedbackResolver(sessionId, threadTs) {
+        const key = `${sessionId}:${threadTs}`;
+        this.feedbackResolvers.delete(key);
+        logger.debug(`[WebhookServer] Cleared feedback resolver for ${key}`);
+    }
+    resolveFeedback(sessionId, threadTs, response) {
+        const key = `${sessionId}:${threadTs}`;
+        const resolver = this.feedbackResolvers.get(key);
+        if (resolver) {
+            resolver(response);
+            this.feedbackResolvers.delete(key);
+            logger.debug(`[WebhookServer] Resolved feedback for ${key}`);
+        }
     }
 }
 //# sourceMappingURL=webhook-server.js.map

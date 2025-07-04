@@ -18,5 +18,9 @@
       "Bash(curl:*)"
     ],
     "deny": []
-  }
+  },
+  "enabledMcpjsonServers": [
+    "claude-mcp-slack-feedback"
+  ],
+  "enableAllProjectMcpServers": true
 }

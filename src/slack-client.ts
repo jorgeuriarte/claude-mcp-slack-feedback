@@ -1,16 +1,18 @@
 import { WebClient } from '@slack/web-api';
 import { ConfigManager } from './config-manager.js';
 import { SessionManager } from './session-manager.js';
-import { FeedbackRequest, FeedbackResponse, UserConfig } from './types.js';
+import { FeedbackRequest, UserConfig } from './types.js';
+import { logger } from './logger.js';
 
 export class SlackClient {
   private client?: WebClient;
   private configManager: ConfigManager;
   private sessionManager: SessionManager;
-  private responseQueue: Map<string, FeedbackResponse[]> = new Map();
+  // private responseQueue: Map<string, FeedbackResponse[]> = new Map();  // Not needed - webhooks handled by Cloud Run
   private rateLimitRetries = 3;
   private rateLimitDelay = 1000;
   private lastMessageTs: Map<string, string> = new Map(); // Track last message timestamp per session
+  private sessionThreadTs: Map<string, string> = new Map(); // Track thread timestamp per session
 
   constructor(configManager: ConfigManager, sessionManager: SessionManager) {
     this.configManager = configManager;
@@ -142,15 +144,18 @@ export class SlackClient {
       throw new Error('No active session');
     }
 
-    // Get user info for better identification
-    const user = this.configManager.getUsers().find((u: UserConfig) => u.userId === session.userId);
+    // Get session emoji
     const sessionEmoji = this.getSessionEmoji(session.sessionId);
     
-    let message = `${sessionEmoji} **Question from Claude [Session: ${session.sessionId}]**\n`;
-    if (user?.username) {
-      message += `👤 _User: ${user.username}_\n\n`;
-    }
-    message += request.question;
+    // Determine priority and visual indicators
+    const priority = (request as any).priority || 'normal';
+    const questionType = priority === 'urgent' ? '🚨 **URGENT DECISION NEEDED**' : 
+                        priority === 'high' ? '⚠️ **Important Question**' :
+                        priority === 'low' ? '💭 Quick question' :
+                        '❓ **Question**';
+    
+    // Simple, natural format
+    let message = request.question;
     
     if (request.context) {
       message += `\n\n**Context:**\n${request.context}`;
@@ -165,40 +170,45 @@ export class SlackClient {
 
     message += '\n\n_Please reply in this thread_';
 
-    // Create Slack blocks for better formatting
-    const sessionDisplay = session.sessionLabel ? 
-      `${session.sessionLabel} (${session.sessionId})` : 
-      session.sessionId;
+    // Simple format - just label and message
+    let formattedMessage = request.question;
     
-    // Format header with session label and contact mention
-    let headerText = `[${sessionDisplay}]`;
+    // Add mention at the beginning of the message
     if (session.sessionContact) {
-      headerText += ` ${session.sessionContact}`;
+      // Handle special case for @here
+      const mention = session.sessionContact === 'here' ? '@here' : `<@${session.sessionContact}>`;
+      formattedMessage = `${mention} ${formattedMessage}`;
     }
-    headerText += `\n${sessionEmoji} *Question from Claude*`;
-    if (user?.username) {
-      headerText += `\n*User:* ${user.username}`;
+    
+    const blocks: any[] = [];
+    
+    // Add session label and question type as context
+    const contextElements = [];
+    if (session.sessionLabel) {
+      contextElements.push({
+        type: "mrkdwn",
+        text: `${sessionEmoji} ${session.sessionLabel}`
+      });
     }
-      
-    const blocks: any[] = [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: headerText
-        }
-      },
-      {
-        type: "divider"
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: request.question
-        }
+    contextElements.push({
+      type: "mrkdwn", 
+      text: questionType
+    });
+    
+    if (contextElements.length > 0) {
+      blocks.push({
+        type: "context",
+        elements: contextElements
+      });
+    }
+    
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: formattedMessage
       }
-    ];
+    });
 
     if (request.context) {
       blocks.push({
@@ -242,6 +252,7 @@ export class SlackClient {
 
     // Store the message timestamp for this session
     this.lastMessageTs.set(session.sessionId, result.ts!);
+    this.sessionThreadTs.set(session.sessionId, result.ts!);
 
     return result.ts!;
   }
@@ -284,6 +295,9 @@ export class SlackClient {
     );
   }
 
+  // pollMessages method removed - all polling now goes through Cloud Run
+  // This eliminates direct Slack API calls and prevents rate limiting
+  /*
   async pollMessages(sessionId: string, since?: number): Promise<FeedbackResponse[]> {
     if (!this.client) {
       throw new Error('Slack client not configured');
@@ -294,7 +308,7 @@ export class SlackClient {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    console.log(`[SlackClient] Polling messages for session ${sessionId}, channel ${session.channelId}, since ${since ? new Date(since).toLocaleTimeString() : 'beginning'}`);
+    logger.debug(`[SlackClient] Polling messages for session ${sessionId}, channel ${session.channelId}, since ${since ? new Date(since).toLocaleTimeString() : 'beginning'}`);
 
     const responses: FeedbackResponse[] = [];
     const botUserId = (await this.client.auth.test()).user_id;
@@ -302,32 +316,12 @@ export class SlackClient {
     // Get the last message timestamp for this session
     const lastMessageTs = this.lastMessageTs.get(sessionId);
     
-    if (!lastMessageTs) {
-      // If no message has been sent yet, check channel history
-      const oldest = since ? (since / 1000).toString() : '0';
-      const history = await this.retryWithBackoff(() =>
-        this.client!.conversations.history({
-          channel: session.channelId,
-          oldest,
-          limit: 100
-        })
-      );
-
-      for (const msg of history.messages || []) {
-        if (msg.user && msg.user !== botUserId && !msg.bot_id) {
-          responses.push({
-            sessionId,
-            response: msg.text || '',
-            timestamp: parseFloat(msg.ts!) * 1000,
-            userId: msg.user,
-            threadTs: msg.thread_ts || msg.ts!
-          });
-        }
-      }
-    } else {
-      // Check for thread replies to our last message
+    // Strategy: Check BOTH thread replies AND channel messages
+    
+    // 1. Check thread replies if we have a thread
+    if (lastMessageTs) {
       try {
-        console.log(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
+        logger.debug(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
         const replies = await this.retryWithBackoff(() =>
           this.client!.conversations.replies({
             channel: session.channelId,
@@ -338,7 +332,7 @@ export class SlackClient {
 
         // Skip the first message (which is our question)
         const threadMessages = replies.messages?.slice(1) || [];
-        console.log(`[SlackClient] Found ${threadMessages.length} messages in thread`);
+        logger.debug(`[SlackClient] Found ${threadMessages.length} messages in thread`);
         
         for (const msg of threadMessages) {
           if (msg.user && msg.user !== botUserId && !msg.bot_id) {
@@ -355,16 +349,61 @@ export class SlackClient {
           }
         }
       } catch (error: any) {
-        // If thread_not_found, fall back to channel history
-        if (error.error === 'thread_not_found') {
-          return this.pollMessages(sessionId, since);
-        }
-        throw error;
+        logger.error(`[SlackClient] Error checking thread: ${error.message}`);
       }
     }
+    
+    // 2. ALWAYS check channel messages too (for responses outside thread)
+    const oldest = since ? (since / 1000).toString() : (lastMessageTs || '0');
+    try {
+      const history = await this.retryWithBackoff(() =>
+        this.client!.conversations.history({
+          channel: session.channelId,
+          oldest,
+          limit: 50
+        })
+      );
 
+      logger.debug(`[SlackClient] Found ${history.messages?.length || 0} channel messages`);
+
+      for (const msg of history.messages || []) {
+        // Include messages that:
+        // - Are from users (not bots)
+        // - Are NOT in a thread (no thread_ts) OR are thread parents
+        // - Mention the bot OR contain the session ID
+        if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+          const isDirectChannelMessage = !msg.thread_ts || msg.thread_ts === msg.ts;
+          const mentionsBot = msg.text?.includes(`<@${botUserId}>`);
+          const containsSessionId = msg.text?.includes(session.sessionId);
+          
+          if (isDirectChannelMessage && (mentionsBot || containsSessionId || !lastMessageTs)) {
+            // Avoid duplicates from thread check
+            const isDuplicate = responses.some(r => 
+              r.timestamp === parseFloat(msg.ts!) * 1000
+            );
+            
+            if (!isDuplicate) {
+              responses.push({
+                sessionId,
+                response: msg.text || '',
+                timestamp: parseFloat(msg.ts!) * 1000,
+                userId: msg.user,
+                threadTs: msg.ts! // Channel messages reference themselves
+              });
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      logger.error(`[SlackClient] Error checking channel: ${error.message}`);
+    }
+
+    // Sort by timestamp
+    responses.sort((a, b) => a.timestamp - b.timestamp);
+    
     return responses;
   }
+  */
 
   async getChannelInfo(channelId: string): Promise<{ id: string; name: string }> {
     if (!this.client) {
@@ -383,6 +422,8 @@ export class SlackClient {
     };
   }
 
+  // Webhook methods removed - all webhooks handled by Cloud Run
+  /*
   addWebhookResponse(response: FeedbackResponse): void {
     const sessionResponses = this.responseQueue.get(response.sessionId) || [];
     sessionResponses.push(response);
@@ -394,13 +435,14 @@ export class SlackClient {
     this.responseQueue.set(sessionId, []); // Clear after reading
     return responses;
   }
+  */
 
   async findChannel(channelName: string): Promise<string | undefined> {
     if (!this.client) {
       throw new Error('Slack client not configured');
     }
 
-    console.error(`[findChannel] Looking for channel: ${channelName}`);
+    logger.error(`[findChannel] Looking for channel: ${channelName}`);
 
     // First try with exact name match
     const list = await this.retryWithBackoff(() =>
@@ -411,7 +453,7 @@ export class SlackClient {
       })
     );
 
-    console.error(`[findChannel] Found ${list.channels?.length || 0} channels`);
+    logger.error(`[findChannel] Found ${list.channels?.length || 0} channels`);
 
     // Try exact match first
     let channel = list.channels?.find(c => c.name === channelName);
@@ -424,29 +466,29 @@ export class SlackClient {
     }
 
     if (!channel) {
-      console.error(`[findChannel] Channel ${channelName} not found in list`);
+      logger.error(`[findChannel] Channel ${channelName} not found in list`);
       return undefined;
     }
 
-    console.error(`[findChannel] Found channel ${channel.name} (ID: ${channel.id}, is_member: ${channel.is_member})`);
+    logger.error(`[findChannel] Found channel ${channel.name} (ID: ${channel.id}, is_member: ${channel.is_member})`);
 
     // If found but bot is not a member, try to join
     if (channel && !channel.is_member) {
-      console.error(`[findChannel] Bot is not a member of #${channel.name}, attempting to join...`);
+      logger.error(`[findChannel] Bot is not a member of #${channel.name}, attempting to join...`);
       try {
         await this.retryWithBackoff(() =>
           this.client!.conversations.join({
             channel: channel.id!
           })
         );
-        console.error(`[findChannel] ✅ Successfully joined channel #${channel.name}`);
+        logger.error(`[findChannel] ✅ Successfully joined channel #${channel.name}`);
       } catch (error: any) {
-        console.error(`[findChannel] ❌ Failed to join channel #${channel.name}: ${error.message}`);
-        console.error(`[findChannel] Error details:`, error);
+        logger.error(`[findChannel] ❌ Failed to join channel #${channel.name}: ${error.message}`);
+        logger.error(`[findChannel] Error details:`, error);
         // Still return the channel ID, let the user know in the UI
       }
     } else if (channel && channel.is_member) {
-      console.error(`[findChannel] Bot is already a member of #${channel.name}`);
+      logger.error(`[findChannel] Bot is already a member of #${channel.name}`);
     }
 
     return channel?.id;
@@ -483,7 +525,7 @@ export class SlackClient {
     } catch (error: any) {
       if (error.error === 'rate_limited' && retries > 0) {
         const retryAfter = error.retryAfter || this.rateLimitDelay / 1000;
-        console.log(`[SlackClient] Rate limited, retrying after ${retryAfter}s (${retries} retries left)`);
+        logger.debug(`[SlackClient] Rate limited, retrying after ${retryAfter}s (${retries} retries left)`);
         await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
         return this.retryWithBackoff(operation, retries - 1);
       }
@@ -493,5 +535,136 @@ export class SlackClient {
       }
       throw error;
     }
+  }
+
+  async getLastThreadTs(sessionId: string): Promise<string | undefined> {
+    return this.sessionThreadTs.get(sessionId);
+  }
+  
+  async getSession(sessionId: string): Promise<any> {
+    return this.configManager.getSession(sessionId);
+  }
+
+  hasValidToken(): boolean {
+    return !!this.client;
+  }
+
+  async addReaction(channel: string, timestamp: string, reaction: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Slack client not initialized');
+    }
+
+    await this.retryWithBackoff(() =>
+      this.client!.reactions.add({
+        channel,
+        timestamp,
+        name: reaction
+      })
+    );
+  }
+
+  async getRecentMessages(channel: string, limit: number = 10): Promise<any[]> {
+    if (!this.client) {
+      throw new Error('Slack client not initialized');
+    }
+
+    const result = await this.retryWithBackoff(() =>
+      this.client!.conversations.history({
+        channel,
+        limit
+      })
+    );
+
+    return result.messages || [];
+  }
+
+  async sendSimpleThreadMessage(channel: string, message: string, threadTs: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Slack client not configured');
+    }
+
+    // Send simple message without any formatting or prefixes
+    await this.retryWithBackoff(() =>
+      this.client!.chat.postMessage({
+        channel,
+        text: message,
+        thread_ts: threadTs,
+        mrkdwn: true
+      })
+    );
+  }
+
+  async sendStatusUpdate(message: string, context?: string): Promise<string> {
+    if (!this.client) {
+      throw new Error('Slack client not configured');
+    }
+
+    const session = await this.sessionManager.getCurrentSession();
+    if (!session) {
+      throw new Error('No active session');
+    }
+
+    const sessionEmoji = this.getSessionEmoji(session.sessionId);
+    
+    // Simple format - just message with status indicator
+    let formattedMessage = message;
+    
+    // Add mention at the beginning if configured
+    if (session.sessionContact) {
+      // Handle special case for @here
+      const mention = session.sessionContact === 'here' ? '@here' : `<@${session.sessionContact}>`;
+      formattedMessage = `${mention} ${formattedMessage}`;
+    }
+    
+    const blocks: any[] = [];
+    
+    // Add session label and status indicator
+    const contextElements = [];
+    if (session.sessionLabel) {
+      contextElements.push({
+        type: "mrkdwn",
+        text: `${sessionEmoji} ${session.sessionLabel}`
+      });
+    }
+    contextElements.push({
+      type: "mrkdwn",
+      text: '📊 **Status Update. No reply needed**'
+    });
+    
+    if (contextElements.length > 0) {
+      blocks.push({
+        type: "context",
+        elements: contextElements
+      });
+    }
+    
+    // Include context in the main message if provided
+    let messageText = formattedMessage;
+    if (context) {
+      messageText += `\n\n${context}`;
+    }
+    
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: messageText
+      }
+    });
+
+    const result = await this.retryWithBackoff(() =>
+      this.client!.chat.postMessage({
+        channel: session.channelId,
+        text: message, // Fallback text
+        blocks,
+        username: `Claude Session ${session.sessionId}`,
+        icon_emoji: sessionEmoji
+      })
+    );
+
+    // Store the message timestamp
+    this.lastMessageTs.set(session.sessionId, result.ts!);
+
+    return result.ts!;
   }
 }

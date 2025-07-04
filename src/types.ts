@@ -24,7 +24,19 @@ export interface Session {
   status: 'active' | 'expired';
   webhookUrl?: string;
   tunnelUrl?: string;
-  mode: 'webhook' | 'polling';
+  mode: 'webhook' | 'polling' | 'hybrid';
+  pollingConfig?: {
+    autoStart: boolean;
+    initialDelay?: number;
+    normalInterval?: number;
+    idleInterval?: number;
+    maxInterval?: number;
+  };
+  hybridConfig?: {
+    webhookTimeout: number;
+    fallbackAfterFailures: number;
+    healthCheckInterval: number;
+  };
 }
 
 export interface FeedbackRequest {
@@ -61,9 +73,33 @@ export interface MCPToolParams {
     context?: string;
     options?: string[];
   };
+  sendQuestion: {
+    question: string;
+    context?: string;
+    options?: string[];
+    priority?: 'low' | 'normal' | 'high' | 'urgent';
+    response_type?: 'quick' | 'detailed' | 'any';
+  };
+  checkResponses: {
+    question_id: string;
+    include_channel?: boolean;
+    channel_window?: number;
+  };
+  addReaction: {
+    channel: string;
+    timestamp: string;
+    reaction: string;
+  };
+  getRecentMessages: {
+    limit?: number;
+  };
   informSlack: {
     message: string;
     context?: string;
+  };
+  sendSimpleUpdate: {
+    message: string;
+    threadTs: string;
   };
   updateProgress: {
     message: string;

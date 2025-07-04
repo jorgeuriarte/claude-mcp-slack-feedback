@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "claude-mcp-slack-feedback": {
+      "command": "node",
+      "args": [
+        "./dist/index.js"
+      ],
+      "env": {
+        "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}",
+        "SLACK_WORKSPACE_URL": "${SLACK_WORKSPACE_URL}",
+        "CLOUD_FUNCTION_URL": "https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app"
+      }
+    }
+  }
+}

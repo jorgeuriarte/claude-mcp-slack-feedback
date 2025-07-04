@@ -58,7 +58,7 @@ describe('SessionManager', () => {
       expect(session.port).toBeGreaterThanOrEqual(3000);
       expect(session.port).toBeLessThanOrEqual(4000);
       expect(session.status).toBe('active');
-      expect(session.mode).toBe('webhook');
+      expect(session.mode).toBe('hybrid');
       
       expect(mockConfigManager.addSession).toHaveBeenCalledWith(
         expect.objectContaining({

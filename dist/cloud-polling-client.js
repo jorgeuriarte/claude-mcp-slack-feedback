@@ -1,0 +1,108 @@
+/**
+ * Client for polling responses from Cloud Functions
+ */
+import { logger } from './logger.js';
+export class CloudPollingClient {
+    cloudFunctionUrl;
+    lastTimestamp = new Map();
+    constructor(cloudFunctionUrl) {
+        this.cloudFunctionUrl = cloudFunctionUrl || process.env.CLOUD_FUNCTION_URL || 'https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app';
+        logger.info(`[CLOUD POLLING DEBUG] Initialized with URL: ${this.cloudFunctionUrl}`);
+    }
+    /**
+     * Poll for new responses from Cloud Functions
+     */
+    async pollResponses(sessionId, threadTs) {
+        // If we have threadTs, use it as the primary key since webhook stores under threadTs
+        const endpoint = threadTs
+            ? `/responses/${threadTs}/${threadTs}` // Use threadTs as session key
+            : `/responses/${sessionId}`;
+        const key = threadTs ? `${threadTs}:${threadTs}` : sessionId;
+        const since = this.lastTimestamp.get(key) || 0;
+        const url = `${this.cloudFunctionUrl}${endpoint}?since=${since}`;
+        logger.info(`[CLOUD POLLING DEBUG] Polling: ${url}`);
+        logger.info(`[CLOUD POLLING DEBUG] Session: ${sessionId}, ThreadTS: ${threadTs || 'none'}, Since: ${since}`);
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            if (!response.ok) {
+                const errorText = await response.text();
+                logger.error(`Cloud function error: ${response.status} - ${errorText}`);
+                throw new Error(`Cloud function returned ${response.status}: ${errorText}`);
+            }
+            const data = await response.json();
+            // Update last timestamp
+            if (data.lastTimestamp) {
+                this.lastTimestamp.set(key, data.lastTimestamp);
+            }
+            return data.responses || [];
+        }
+        catch (error) {
+            logger.error('Error polling responses:', error);
+            return [];
+        }
+    }
+    /**
+     * Check health of Cloud Functions
+     */
+    async checkHealth() {
+        try {
+            const response = await fetch(`${this.cloudFunctionUrl}/health`);
+            const data = await response.json();
+            return data.status === 'healthy';
+        }
+        catch (error) {
+            logger.error('Health check failed:', error);
+            return false;
+        }
+    }
+    /**
+     * Poll for channel messages from Cloud Functions
+     */
+    async pollChannelMessages(channelId) {
+        const url = `${this.cloudFunctionUrl}/channel-messages/${channelId}`;
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`Cloud function returned ${response.status}: ${await response.text()}`);
+            }
+            const data = await response.json();
+            return data.messages || [];
+        }
+        catch (error) {
+            logger.error(`[CloudPollingClient] Error polling channel messages:`, error);
+            return [];
+        }
+    }
+    /**
+     * Clear stored responses for a session (cleanup)
+     */
+    async clearSession(sessionId) {
+        try {
+            await fetch(`${this.cloudFunctionUrl}/responses/${sessionId}`, {
+                method: 'DELETE'
+            });
+            // Clear local timestamps
+            const keysToDelete = [];
+            for (const key of this.lastTimestamp.keys()) {
+                if (key.startsWith(sessionId)) {
+                    keysToDelete.push(key);
+                }
+            }
+            keysToDelete.forEach(key => this.lastTimestamp.delete(key));
+        }
+        catch (error) {
+            logger.error(`[CloudPollingClient] Error clearing session:`, error);
+        }
+    }
+}
+//# sourceMappingURL=cloud-polling-client.js.map

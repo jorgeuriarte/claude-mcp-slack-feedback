@@ -5,63 +5,39 @@ export interface PollingResult {
     responses: FeedbackResponse[];
     shouldStop: boolean;
     requiresFeedback?: boolean;
+    requiresInterpretation?: boolean;
+    timedOut?: boolean;
 }
 export declare class PollingStrategy {
     private slackClient;
     private sessionId;
     private mode;
-    private readonly fibonacciSequence;
-    private readonly longPollingInterval;
+    static create(slackClient: SlackClient, sessionId: string, mode: PollingMode): PollingStrategy;
+    private readonly intensivePollingInterval;
+    private readonly intensivePollingDuration;
+    private readonly pauseInterval;
     private readonly minPollingInterval;
     private lastApiCallTime;
     private rateLimitRetryAfter;
-    private readonly negativePatterns;
+    private cloudClient;
     constructor(slackClient: SlackClient, sessionId: string, mode: PollingMode);
     /**
      * Execute polling strategy based on mode
      */
     execute(threadTs?: string): Promise<PollingResult>;
     /**
+     * Execute polling with timeout (for send_question)
+     */
+    executeWithTimeout(threadTs: string, timeoutSeconds: number): Promise<PollingResult>;
+    /**
      * Feedback required mode - polls indefinitely until response
      */
     private executeFeedbackPolling;
     /**
-     * Courtesy inform mode - polls with fibonacci backoff, stops if no response
+     * Courtesy inform mode - polls for a short duration
      */
     private executeCourtesyPolling;
-    /**
-     * Check if response indicates user wants to stop/change course
-     */
-    private isNegativeResponse;
-    /**
-     * Send a message indicating we're still waiting
-     */
-    private sendWaitingMessage;
-    /**
-     * Sleep for specified milliseconds
-     */
-    private sleep;
-    /**
-     * Ensure we respect rate limits before making API calls
-     */
     private ensureRateLimit;
-    /**
-     * Handle rate limit errors from Slack
-     */
-    handleRateLimit(retryAfter: number): void;
-    /**
-     * Send a rate limit message to the user
-     */
-    private sendRateLimitMessage;
-    /**
-     * Check if the process has been interrupted (placeholder)
-     * In real implementation, this would check for ESC key or other interrupt signals
-     */
-    private checkForInterrupt;
-    /**
-     * Create a polling strategy instance
-     */
-    static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy;
-    static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy;
+    private sleep;
 }
 //# sourceMappingURL=polling-strategy.d.ts.map

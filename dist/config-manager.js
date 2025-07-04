@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
+import { logger } from './logger.js';
 export class ConfigManager {
     configPath;
     config;
@@ -19,7 +20,7 @@ export class ConfigManager {
             await this.loadConfig();
         }
         catch (error) {
-            console.error('Error initializing config:', error);
+            logger.error('Error initializing config:', error);
             await this.saveConfig();
         }
     }
@@ -47,7 +48,7 @@ export class ConfigManager {
             };
         }
         catch (error) {
-            console.log('No existing config found, creating new one');
+            logger.debug('No existing config found, creating new one');
         }
     }
     async saveConfig() {

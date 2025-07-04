@@ -1,0 +1,65 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Build project
+      run: npm run build
+    
+    - name: Create tarball
+      run: npm pack
+    
+    - name: Get version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+    
+    - name: Create Release with Assets
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref }}
+        name: Release ${{ github.ref }}
+        body: |
+          ## Installation
+
+          Download and install the package:
+          ```bash
+          curl -L https://github.com/jorgeuriarte/claude-mcp-slack-feedback/releases/download/${{ github.ref_name }}/claude-mcp-slack-feedback.tgz -o claude-mcp-slack-feedback.tgz
+          npm install -g ./claude-mcp-slack-feedback.tgz
+          claude-mcp-slack-feedback-install
+          ```
+
+          See [README](https://github.com/jorgeuriarte/claude-mcp-slack-feedback#readme) for full documentation.
+        draft: false
+        prerelease: false
+        files: |
+          claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Copy and Upload Latest Version
+      run: |
+        cp claude-mcp-slack-feedback-${{ steps.version.outputs.VERSION }}.tgz claude-mcp-slack-feedback.tgz
+        gh release upload ${{ github.ref_name }} claude-mcp-slack-feedback.tgz --clobber
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

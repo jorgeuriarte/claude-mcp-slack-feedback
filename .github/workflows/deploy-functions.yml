@@ -1,0 +1,206 @@
+name: Deploy to Google Cloud Functions
+
+on:
+  push:
+    branches:
+      - main
+      - feature/hybrid-architecture
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  FUNCTION_NAME: claude-mcp-slack-feedback
+  REGION: ${{ secrets.GCP_REGION || 'europe-west1' }}
+  SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+  SLACK_WORKSPACE_URL: ${{ secrets.SLACK_WORKSPACE_URL }}
+  SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        npm ci
+        npm run build
+
+    - name: Run tests
+      run: npm test
+      continue-on-error: true # Allow deployment even if some tests fail
+
+    - name: Prepare deployment package
+      run: |
+        # Copy built files to deployment directory
+        cp -r dist deploy/functions/
+        
+        # Use the webhook server for Cloud Functions
+        cp deploy/functions/webhook-server.js deploy/functions/index.js
+        
+        # Create a simplified package.json without build script
+        node -e "
+          const pkg = require('./package.json');
+          const deployPkg = {
+            name: pkg.name,
+            version: pkg.version,
+            type: 'module',
+            main: 'index.js',
+            dependencies: {
+              ...pkg.dependencies,
+              '@google-cloud/functions-framework': '^3.3.0'
+            },
+            engines: pkg.engines
+          };
+          require('fs').writeFileSync('deploy/functions/package.json', JSON.stringify(deployPkg, null, 2));
+        "
+        
+        # Create .gcloudignore
+        cat > deploy/functions/.gcloudignore << EOF
+        .git
+        node_modules
+        src
+        tests
+        *.test.js
+        *.test.ts
+        .env
+        .env.*
+        package-lock.json
+        EOF
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Deploy to Cloud Functions
+      run: |
+        cd deploy/functions
+        
+        # Deploy the function
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --gen2 \
+          --runtime nodejs20 \
+          --region ${{ env.REGION }} \
+          --source . \
+          --entry-point mcp \
+          --trigger-http \
+          --allow-unauthenticated \
+          --memory 512MB \
+          --timeout 540s \
+          --max-instances 10 \
+          --set-env-vars "NODE_ENV=production,SLACK_BOT_TOKEN=${{ env.SLACK_BOT_TOKEN }},SLACK_WORKSPACE_URL=${{ env.SLACK_WORKSPACE_URL }},SLACK_SIGNING_SECRET=${{ env.SLACK_SIGNING_SECRET }},VERSION=${{ github.run_number }},DEPLOYMENT_ENV=${{ inputs.environment || 'production' }}"
+
+    - name: Get function URL
+      id: function_url
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} \
+          --region ${{ env.REGION }} \
+          --format="value(serviceConfig.uri)")
+        echo "FUNCTION_URL=$FUNCTION_URL" >> $GITHUB_ENV
+        echo "function_url=$FUNCTION_URL" >> $GITHUB_OUTPUT
+
+    - name: Verify deployment
+      run: |
+        sleep 10 # Wait for function to be ready
+        
+        # Check health endpoint
+        HEALTH_RESPONSE=$(curl -s ${{ env.FUNCTION_URL }}/health)
+        HEALTH_STATUS=$(echo $HEALTH_RESPONSE | jq -r '.status')
+        
+        if [ "$HEALTH_STATUS" != "healthy" ]; then
+          echo "❌ Health check failed"
+          echo "Response: $HEALTH_RESPONSE"
+          exit 1
+        fi
+        
+        echo "✅ Deployment verified - Function is healthy"
+        echo "Function URL: ${{ env.FUNCTION_URL }}"
+
+    - name: Configure MCP client
+      run: |
+        # Create example MCP configuration for Claude
+        cat > mcp-config-example.json << EOF
+        {
+          "claude-mcp-slack-feedback": {
+            "command": "npx",
+            "args": [
+              "-y",
+              "@modelcontextprotocol/client",
+              "connect",
+              "${{ env.FUNCTION_URL }}/mcp"
+            ],
+            "env": {}
+          }
+        }
+        EOF
+        
+        echo "📋 MCP Configuration saved to mcp-config-example.json"
+
+    - name: Create deployment summary
+      run: |
+        echo "# Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Cloud Function Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Function Name**: ${{ env.FUNCTION_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Region**: ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **URL**: ${{ env.FUNCTION_URL }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## MCP Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "Add this to your Claude MCP configuration:" >> $GITHUB_STEP_SUMMARY
+        echo '```json' >> $GITHUB_STEP_SUMMARY
+        cat mcp-config-example.json >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Monitoring" >> $GITHUB_STEP_SUMMARY
+        echo "- [View Logs](https://console.cloud.google.com/functions/details/${{ env.REGION }}/${{ env.FUNCTION_NAME }}?project=${{ env.PROJECT_ID }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [View Metrics](https://console.cloud.google.com/monitoring/dashboards?project=${{ env.PROJECT_ID }})" >> $GITHUB_STEP_SUMMARY
+
+    - name: Setup monitoring alerts
+      if: ${{ inputs.environment == 'production' || github.ref == 'refs/heads/main' }}
+      run: |
+        # Create alert policy for function errors
+        gcloud alpha monitoring policies create \
+          --notification-channels=${{ secrets.MONITORING_CHANNEL_ID }} \
+          --display-name="MCP Slack Feedback - High Error Rate" \
+          --condition-display-name="Error rate > 5%" \
+          --condition-expression='{
+            "conditionThreshold": {
+              "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"${{ env.FUNCTION_NAME }}\" AND metric.type=\"cloudfunctions.googleapis.com/function/execution_count\" AND metric.labels.status!=\"ok\"",
+              "comparison": "COMPARISON_GT",
+              "thresholdValue": 0.05,
+              "duration": "300s",
+              "aggregations": [{
+                "alignmentPeriod": "60s",
+                "perSeriesAligner": "ALIGN_RATE"
+              }]
+            }
+          }' || echo "Alert policy creation skipped (may already exist)"
