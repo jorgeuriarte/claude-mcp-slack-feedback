@@ -26,6 +26,7 @@ export class CloudPollingClient {
 
   constructor(cloudFunctionUrl?: string) {
     this.cloudFunctionUrl = cloudFunctionUrl || process.env.CLOUD_FUNCTION_URL || 'https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app';
+    logger.info(`[CLOUD POLLING DEBUG] Initialized with URL: ${this.cloudFunctionUrl}`);
   }
 
   /**
@@ -41,7 +42,8 @@ export class CloudPollingClient {
     const since = this.lastTimestamp.get(key) || 0;
     
     const url = `${this.cloudFunctionUrl}${endpoint}?since=${since}`;
-    logger.debug(`Polling cloud function: ${url}`);
+    logger.info(`[CLOUD POLLING DEBUG] Polling: ${url}`);
+    logger.info(`[CLOUD POLLING DEBUG] Session: ${sessionId}, ThreadTS: ${threadTs || 'none'}, Since: ${since}`);
     
     try {
       const response = await fetch(url, {

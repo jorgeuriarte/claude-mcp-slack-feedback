@@ -85,13 +85,18 @@ export class PollingStrategy {
                 let responses;
                 if (this.useCloudPolling && this.cloudClient) {
                     // Poll from Cloud Functions
+                    logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
                     const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+                    logger.info(`[POLLING DEBUG] Thread TS: ${threadTs || 'none'}`);
                     const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+                    logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
                     // Also poll channel messages (aggressive polling against our own server)
                     const session = await this.slackClient.getSession?.(this.sessionId);
                     let channelResponses = [];
                     if (session?.channelId) {
+                        logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
                         channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+                        logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
                     }
                     // Combine thread and channel responses
                     const allResponses = [...cloudResponses, ...channelResponses];
@@ -187,13 +192,18 @@ export class PollingStrategy {
                 let responses;
                 if (this.useCloudPolling && this.cloudClient) {
                     // Poll from Cloud Functions
+                    logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
                     const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
+                    logger.info(`[POLLING DEBUG] Thread TS: ${threadTs || 'none'}`);
                     const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
+                    logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
                     // Also poll channel messages (aggressive polling against our own server)
                     const session = await this.slackClient.getSession?.(this.sessionId);
                     let channelResponses = [];
                     if (session?.channelId) {
+                        logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
                         channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+                        logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
                     }
                     // Combine thread and channel responses
                     const allResponses = [...cloudResponses, ...channelResponses];

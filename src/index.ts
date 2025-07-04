@@ -616,6 +616,9 @@ DO NOT use for:
 
     // Start polling with timeout
     const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
+    logger.info(`[DEBUG] CLOUD_FUNCTION_URL: ${process.env.CLOUD_FUNCTION_URL || 'not set'}`);
+    logger.info(`[DEBUG] Using Cloud Polling: ${useCloudPolling}`);
+    
     const pollingStrategy = useCloudPolling
       ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
       : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
@@ -1285,7 +1288,8 @@ DO NOT use for:
       
       // Always use polling mode - webhooks are handled by Cloud Run
       await this.sessionManager.setSessionMode(session.sessionId, 'polling');
-      logger.info(`Session ${session.sessionId}: Using polling mode (Cloud Run architecture)`);
+      logger.info(`[DEBUG] Session ${session.sessionId}: Set to polling mode`);
+      logger.info(`[DEBUG] Cloud Run architecture active - webhooks handled remotely`);
       
       // Note: Webhooks are configured between Slack and Cloud Run, not locally
     }
