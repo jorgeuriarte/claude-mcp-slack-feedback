@@ -28,12 +28,41 @@ Usage:
   claude-mcp-slack-feedback          Start the MCP server (for Claude Code)
   claude-mcp-slack-feedback -v       Show version
   claude-mcp-slack-feedback -h       Show this help
+  claude-mcp-slack-feedback --info   Show debug information
 
 For installation and setup:
   claude-mcp-slack-feedback-install
 
 Documentation:
   https://github.com/jorgeuriarte/claude-mcp-slack-feedback
+
+Debug Mode:
+  When running with 'claude --debug', logs will appear in stderr.
+  Set MCP_LOG_LEVEL=DEBUG for more verbose logging.
+`);
+  process.exit(0);
+}
+
+// Check for info flag
+if (process.argv.includes('--info')) {
+  const { homedir } = await import('os');
+  const logDir = join(homedir(), '.claude-mcp-slack-feedback', 'logs');
+  console.log(`
+Debug Information:
+==================
+Version: ${packageJson.version}
+Log Directory: ${logDir}
+Cloud Function URL: ${process.env.CLOUD_FUNCTION_URL || 'https://claude-mcp-slack-feedback-7af7we7bvq-ew.a.run.app (default)'}
+Log Level: ${process.env.MCP_LOG_LEVEL || 'INFO (default)'}
+
+To view logs:
+  tail -f ${logDir}/mcp-*.log
+
+To enable debug in Claude Code:
+  claude --debug
+
+To increase log verbosity:
+  export MCP_LOG_LEVEL=DEBUG
 `);
   process.exit(0);
 }

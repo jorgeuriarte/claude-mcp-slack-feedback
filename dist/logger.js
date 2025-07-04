@@ -32,6 +32,12 @@ export class Logger {
         this.info(`Log level: ${LogLevel[this.logLevel]}`);
         this.info(`Node version: ${process.version}`);
         this.info(`Process ID: ${process.pid}`);
+        // Log debug mode status
+        const debugVars = ['MCP_DEBUG', 'CLAUDE_DEBUG', 'MCP_CLAUDE_DEBUG', 'DEBUG'];
+        const activeDebug = debugVars.find(v => process.env[v] === '1' || process.env[v] === 'true' || process.env[v] === '*');
+        if (activeDebug) {
+            this.info(`Debug mode: ENABLED via ${activeDebug}=${process.env[activeDebug]} (writing to stderr)`);
+        }
     }
     static getInstance() {
         if (!Logger.instance) {
@@ -47,7 +53,24 @@ export class Logger {
         const logEntry = `[${timestamp}] ${levelStr} ${message}`;
         // IMPORTANT: NO console output when running as MCP server
         // MCP uses stdio for JSON-RPC communication, any console output corrupts the protocol
-        // File output only
+        // EXCEPT when MCP_DEBUG is set, then we write to stderr for debugging
+        // Check if we're in debug mode (various ways to enable it)
+        const isDebugMode = process.env.MCP_DEBUG === '1' ||
+            process.env.MCP_DEBUG === 'true' ||
+            process.env.CLAUDE_DEBUG === '1' ||
+            process.env.CLAUDE_DEBUG === 'true' ||
+            process.env.MCP_CLAUDE_DEBUG === 'true' ||
+            process.env.DEBUG === 'true' ||
+            process.env.DEBUG === '*';
+        if (isDebugMode) {
+            // Write to stderr when in debug mode
+            process.stderr.write(logEntry);
+            if (data) {
+                process.stderr.write(' ' + JSON.stringify(data, null, 2));
+            }
+            process.stderr.write('\n');
+        }
+        // Always write to file
         if (this.writeStream) {
             this.writeStream.write(logEntry);
             if (data) {
