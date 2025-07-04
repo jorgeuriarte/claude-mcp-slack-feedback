@@ -991,7 +991,7 @@ DO NOT use for:
   private async getVersion() {
     const packageJson = {
       name: 'claude-mcp-slack-feedback',
-      version: '1.4.0'
+      version: '1.4.1'
     };
     const buildTime = new Date().toISOString();
     
@@ -999,7 +999,7 @@ DO NOT use for:
       content: [
         {
           type: 'text',
-          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.0:\n- Removed local tunnel creation (cloudflared)\n- All communication now uses Cloud Run architecture\n- Fixed "Error creating tunnel" issues\n- Simplified to always use polling mode locally\n\n✨ v1.3.4:\n- Fixed version display showing outdated information\n- Added project-specific .claude/slack-config.json support\n\n✨ v1.3.3:\n- New send_simple_update tool for brief messages\n- Improved tool descriptions with usage guidelines\n- Enhanced message capture outside threads\n- Fixed GitHub Action for automatic releases`,
+          text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.1:\n- Enable debug output to stderr for claude --debug\n- Support multiple debug environment variables\n- Add --info flag to CLI for debug information\n- Improve rate limit handling in Slack client\n\n✨ v1.4.0:\n- Removed local tunnel creation (cloudflared)\n- All communication now uses Cloud Run architecture\n- Fixed "Error creating tunnel" issues\n- Simplified to always use polling mode locally`,
         },
       ],
     };
