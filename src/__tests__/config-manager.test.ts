@@ -4,6 +4,12 @@ import path from 'path';
 import { homedir } from 'os';
 
 jest.mock('fs', () => ({
+  existsSync: jest.fn().mockReturnValue(true),
+  mkdirSync: jest.fn(),
+  createWriteStream: jest.fn().mockReturnValue({
+    write: jest.fn(),
+    end: jest.fn()
+  }),
   promises: {
     access: jest.fn(),
     mkdir: jest.fn(),

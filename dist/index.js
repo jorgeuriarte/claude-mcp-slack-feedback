@@ -848,14 +848,14 @@ DO NOT use for:
     async getVersion() {
         const packageJson = {
             name: 'claude-mcp-slack-feedback',
-            version: '1.4.2'
+            version: '1.4.3'
         };
         const buildTime = new Date().toISOString();
         return {
             content: [
                 {
                     type: 'text',
-                    text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.2:\n- Completely removed direct Slack API polling\n- All polling now goes through Cloud Run\n- Fixed rate limiting issues permanently\n- Simplified architecture and removed unused code\n\n✨ v1.4.1:\n- Enable debug output to stderr for claude --debug\n- Support multiple debug environment variables\n- Add --info flag to CLI for debug information`,
+                    text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.3:\n- Fixed all test suites (8/8 passing)\n- Removed obsolete tests for eliminated features\n- Fixed fs mock issues in config-manager tests\n- 100% test coverage restored\n\n✨ v1.4.2:\n- Completely removed direct Slack API polling\n- All polling now goes through Cloud Run\n- Fixed rate limiting issues permanently\n- Simplified architecture and removed unused code`,
                 },
             ],
         };

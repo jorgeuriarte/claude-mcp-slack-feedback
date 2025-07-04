@@ -14,7 +14,7 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
     const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
     console.log(`claude-mcp-slack-feedback v${packageJson.version}`);
   } catch (err) {
-    console.log('claude-mcp-slack-feedback v1.4.2');
+    console.log('claude-mcp-slack-feedback v1.4.3');
   }
   process.exit(0);
 }
