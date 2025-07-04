@@ -1,5 +1,43 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Check for version flag
+if (process.argv.includes('--version') || process.argv.includes('-v')) {
+  try {
+    const packagePath = join(__dirname, '..', 'package.json');
+    const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
+    console.log(`claude-mcp-slack-feedback v${packageJson.version}`);
+  } catch (err) {
+    console.log('claude-mcp-slack-feedback v1.4.0');
+  }
+  process.exit(0);
+}
+
+// Check for help flag
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`
+claude-mcp-slack-feedback - MCP server for Slack integration
+
+Usage:
+  claude-mcp-slack-feedback          Start the MCP server (for Claude Code)
+  claude-mcp-slack-feedback -v       Show version
+  claude-mcp-slack-feedback -h       Show this help
+
+For installation and setup:
+  claude-mcp-slack-feedback-install
+
+Documentation:
+  https://github.com/jorgeuriarte/claude-mcp-slack-feedback
+`);
+  process.exit(0);
+}
+
 // Simple launcher for the compiled code
 import('../dist/index.js').catch(err => {
   console.error('Error: Failed to start claude-mcp-slack-feedback');
