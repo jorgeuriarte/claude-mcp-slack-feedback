@@ -4,7 +4,7 @@ export class SlackClient {
     client;
     configManager;
     sessionManager;
-    responseQueue = new Map();
+    // private responseQueue: Map<string, FeedbackResponse[]> = new Map();  // Not needed - webhooks handled by Cloud Run
     rateLimitRetries = 3;
     rateLimitDelay = 1000;
     lastMessageTs = new Map(); // Track last message timestamp per session
@@ -230,92 +230,115 @@ export class SlackClient {
             icon_emoji: sessionEmoji
         }));
     }
-    async pollMessages(sessionId, since) {
-        if (!this.client) {
-            throw new Error('Slack client not configured');
-        }
-        const session = this.configManager.getSession(sessionId);
-        if (!session) {
-            throw new Error(`Session ${sessionId} not found`);
-        }
-        logger.debug(`[SlackClient] Polling messages for session ${sessionId}, channel ${session.channelId}, since ${since ? new Date(since).toLocaleTimeString() : 'beginning'}`);
-        const responses = [];
-        const botUserId = (await this.client.auth.test()).user_id;
-        // Get the last message timestamp for this session
-        const lastMessageTs = this.lastMessageTs.get(sessionId);
-        // Strategy: Check BOTH thread replies AND channel messages
-        // 1. Check thread replies if we have a thread
-        if (lastMessageTs) {
-            try {
-                logger.debug(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
-                const replies = await this.retryWithBackoff(() => this.client.conversations.replies({
-                    channel: session.channelId,
-                    ts: lastMessageTs,
-                    limit: 100
-                }));
-                // Skip the first message (which is our question)
-                const threadMessages = replies.messages?.slice(1) || [];
-                logger.debug(`[SlackClient] Found ${threadMessages.length} messages in thread`);
-                for (const msg of threadMessages) {
-                    if (msg.user && msg.user !== botUserId && !msg.bot_id) {
-                        // Only include messages we haven't seen
-                        if (!since || parseFloat(msg.ts) * 1000 > since) {
-                            responses.push({
-                                sessionId,
-                                response: msg.text || '',
-                                timestamp: parseFloat(msg.ts) * 1000,
-                                userId: msg.user,
-                                threadTs: lastMessageTs
-                            });
-                        }
-                    }
-                }
-            }
-            catch (error) {
-                logger.error(`[SlackClient] Error checking thread: ${error.message}`);
-            }
-        }
-        // 2. ALWAYS check channel messages too (for responses outside thread)
-        const oldest = since ? (since / 1000).toString() : (lastMessageTs || '0');
+    // pollMessages method removed - all polling now goes through Cloud Run
+    // This eliminates direct Slack API calls and prevents rate limiting
+    /*
+    async pollMessages(sessionId: string, since?: number): Promise<FeedbackResponse[]> {
+      if (!this.client) {
+        throw new Error('Slack client not configured');
+      }
+  
+      const session = this.configManager.getSession(sessionId);
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
+  
+      logger.debug(`[SlackClient] Polling messages for session ${sessionId}, channel ${session.channelId}, since ${since ? new Date(since).toLocaleTimeString() : 'beginning'}`);
+  
+      const responses: FeedbackResponse[] = [];
+      const botUserId = (await this.client.auth.test()).user_id;
+      
+      // Get the last message timestamp for this session
+      const lastMessageTs = this.lastMessageTs.get(sessionId);
+      
+      // Strategy: Check BOTH thread replies AND channel messages
+      
+      // 1. Check thread replies if we have a thread
+      if (lastMessageTs) {
         try {
-            const history = await this.retryWithBackoff(() => this.client.conversations.history({
-                channel: session.channelId,
-                oldest,
-                limit: 50
-            }));
-            logger.debug(`[SlackClient] Found ${history.messages?.length || 0} channel messages`);
-            for (const msg of history.messages || []) {
-                // Include messages that:
-                // - Are from users (not bots)
-                // - Are NOT in a thread (no thread_ts) OR are thread parents
-                // - Mention the bot OR contain the session ID
-                if (msg.user && msg.user !== botUserId && !msg.bot_id) {
-                    const isDirectChannelMessage = !msg.thread_ts || msg.thread_ts === msg.ts;
-                    const mentionsBot = msg.text?.includes(`<@${botUserId}>`);
-                    const containsSessionId = msg.text?.includes(session.sessionId);
-                    if (isDirectChannelMessage && (mentionsBot || containsSessionId || !lastMessageTs)) {
-                        // Avoid duplicates from thread check
-                        const isDuplicate = responses.some(r => r.timestamp === parseFloat(msg.ts) * 1000);
-                        if (!isDuplicate) {
-                            responses.push({
-                                sessionId,
-                                response: msg.text || '',
-                                timestamp: parseFloat(msg.ts) * 1000,
-                                userId: msg.user,
-                                threadTs: msg.ts // Channel messages reference themselves
-                            });
-                        }
-                    }
-                }
+          logger.debug(`[SlackClient] Checking thread replies for message ${lastMessageTs}`);
+          const replies = await this.retryWithBackoff(() =>
+            this.client!.conversations.replies({
+              channel: session.channelId,
+              ts: lastMessageTs,
+              limit: 100
+            })
+          );
+  
+          // Skip the first message (which is our question)
+          const threadMessages = replies.messages?.slice(1) || [];
+          logger.debug(`[SlackClient] Found ${threadMessages.length} messages in thread`);
+          
+          for (const msg of threadMessages) {
+            if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+              // Only include messages we haven't seen
+              if (!since || parseFloat(msg.ts!) * 1000 > since) {
+                responses.push({
+                  sessionId,
+                  response: msg.text || '',
+                  timestamp: parseFloat(msg.ts!) * 1000,
+                  userId: msg.user,
+                  threadTs: lastMessageTs
+                });
+              }
             }
+          }
+        } catch (error: any) {
+          logger.error(`[SlackClient] Error checking thread: ${error.message}`);
         }
-        catch (error) {
-            logger.error(`[SlackClient] Error checking channel: ${error.message}`);
+      }
+      
+      // 2. ALWAYS check channel messages too (for responses outside thread)
+      const oldest = since ? (since / 1000).toString() : (lastMessageTs || '0');
+      try {
+        const history = await this.retryWithBackoff(() =>
+          this.client!.conversations.history({
+            channel: session.channelId,
+            oldest,
+            limit: 50
+          })
+        );
+  
+        logger.debug(`[SlackClient] Found ${history.messages?.length || 0} channel messages`);
+  
+        for (const msg of history.messages || []) {
+          // Include messages that:
+          // - Are from users (not bots)
+          // - Are NOT in a thread (no thread_ts) OR are thread parents
+          // - Mention the bot OR contain the session ID
+          if (msg.user && msg.user !== botUserId && !msg.bot_id) {
+            const isDirectChannelMessage = !msg.thread_ts || msg.thread_ts === msg.ts;
+            const mentionsBot = msg.text?.includes(`<@${botUserId}>`);
+            const containsSessionId = msg.text?.includes(session.sessionId);
+            
+            if (isDirectChannelMessage && (mentionsBot || containsSessionId || !lastMessageTs)) {
+              // Avoid duplicates from thread check
+              const isDuplicate = responses.some(r =>
+                r.timestamp === parseFloat(msg.ts!) * 1000
+              );
+              
+              if (!isDuplicate) {
+                responses.push({
+                  sessionId,
+                  response: msg.text || '',
+                  timestamp: parseFloat(msg.ts!) * 1000,
+                  userId: msg.user,
+                  threadTs: msg.ts! // Channel messages reference themselves
+                });
+              }
+            }
+          }
         }
-        // Sort by timestamp
-        responses.sort((a, b) => a.timestamp - b.timestamp);
-        return responses;
+      } catch (error: any) {
+        logger.error(`[SlackClient] Error checking channel: ${error.message}`);
+      }
+  
+      // Sort by timestamp
+      responses.sort((a, b) => a.timestamp - b.timestamp);
+      
+      return responses;
     }
+    */
     async getChannelInfo(channelId) {
         if (!this.client) {
             throw new Error('Slack client not configured');
@@ -328,16 +351,20 @@ export class SlackClient {
             name: info.channel?.name || channelId
         };
     }
-    addWebhookResponse(response) {
-        const sessionResponses = this.responseQueue.get(response.sessionId) || [];
-        sessionResponses.push(response);
-        this.responseQueue.set(response.sessionId, sessionResponses);
+    // Webhook methods removed - all webhooks handled by Cloud Run
+    /*
+    addWebhookResponse(response: FeedbackResponse): void {
+      const sessionResponses = this.responseQueue.get(response.sessionId) || [];
+      sessionResponses.push(response);
+      this.responseQueue.set(response.sessionId, sessionResponses);
     }
-    getWebhookResponses(sessionId) {
-        const responses = this.responseQueue.get(sessionId) || [];
-        this.responseQueue.set(sessionId, []); // Clear after reading
-        return responses;
+  
+    getWebhookResponses(sessionId: string): FeedbackResponse[] {
+      const responses = this.responseQueue.get(sessionId) || [];
+      this.responseQueue.set(sessionId, []); // Clear after reading
+      return responses;
     }
+    */
     async findChannel(channelName) {
         if (!this.client) {
             throw new Error('Slack client not configured');

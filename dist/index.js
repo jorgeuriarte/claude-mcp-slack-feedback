@@ -8,6 +8,7 @@ import { SlackClient } from './slack-client.js';
 // import { TunnelManager } from './tunnel-manager.js';  // Not needed - webhooks handled by Cloud Run
 // import { WebhookServer } from './webhook-server.js';  // Not needed - webhooks handled by Cloud Run
 import { PollingStrategy } from './polling-strategy.js';
+import { CloudPollingClient } from './cloud-polling-client.js';
 import { logger } from './logger.js';
 import { config } from 'dotenv';
 config();
@@ -552,13 +553,9 @@ DO NOT use for:
             statusText += `\nTimeout: None (waiting indefinitely)`;
         }
         statusText += `\n\n⏳ Waiting for response...`;
-        // Start polling with timeout
-        const useCloudPolling = process.env.CLOUD_FUNCTION_URL ? true : false;
-        logger.info(`[DEBUG] CLOUD_FUNCTION_URL: ${process.env.CLOUD_FUNCTION_URL || 'not set'}`);
-        logger.info(`[DEBUG] Using Cloud Polling: ${useCloudPolling}`);
-        const pollingStrategy = useCloudPolling
-            ? PollingStrategy.createCloudPolling(this.slackClient, session.sessionId, 'feedback-required')
-            : PollingStrategy.createFeedbackRequired(this.slackClient, session.sessionId);
+        // Start polling with timeout - always uses Cloud Run
+        logger.info(`[DEBUG] Using Cloud Run polling (no direct Slack API calls)`);
+        const pollingStrategy = PollingStrategy.create(this.slackClient, session.sessionId, 'feedback-required');
         const result = await pollingStrategy.executeWithTimeout(threadTs, timeout);
         if (result.timedOut) {
             return {
@@ -624,7 +621,7 @@ DO NOT use for:
         const channelName = session.channelName || (await this.slackClient.getChannelInfo(session.channelId)).name;
         let statusText = `✅ Information sent to Slack!\n\nChannel: #${channelName}\nThread: ${threadTs}`;
         // Start courtesy polling
-        const pollingStrategy = PollingStrategy.createCourtesyInform(this.slackClient, session.sessionId);
+        const pollingStrategy = PollingStrategy.create(this.slackClient, session.sessionId, 'courtesy-inform');
         const result = await pollingStrategy.execute(threadTs);
         if (result.responses.length > 0) {
             const responseText = result.responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] <@${r.userId}>: ${r.response}`).join('\n');
@@ -779,15 +776,11 @@ DO NOT use for:
         if (!session) {
             throw new McpError(ErrorCode.InvalidParams, 'No session found');
         }
-        let responses;
-        if (session.mode === 'webhook') {
-            // Get webhook responses
-            responses = this.slackClient.getWebhookResponses(session.sessionId);
-        }
-        else {
-            // Use polling
-            responses = await this.slackClient.pollMessages(session.sessionId, params.since);
-        }
+        // Always use Cloud Run polling - no direct Slack API calls
+        const cloudClient = new CloudPollingClient();
+        const threadTs = await this.slackClient.getLastThreadTs?.(session.sessionId);
+        logger.info(`[DEBUG] Checking for responses via Cloud Run`);
+        const responses = await cloudClient.pollResponses(session.sessionId, threadTs);
         if (responses.length === 0) {
             return {
                 content: [
@@ -798,10 +791,19 @@ DO NOT use for:
                 ],
             };
         }
+        // Convert cloud responses to FeedbackResponse format
+        const feedbackResponses = responses.map(r => ({
+            response: r.text,
+            timestamp: r.timestamp,
+            user: r.user,
+            sessionId: session.sessionId,
+            userId: r.user,
+            threadTs: r.threadTs
+        }));
         // Send confirmation to Slack that responses were received
-        if (responses.length > 0 && responses[0].threadTs) {
+        if (feedbackResponses.length > 0 && feedbackResponses[0].threadTs) {
             try {
-                const firstResponse = responses[0];
+                const firstResponse = feedbackResponses[0];
                 const summary = firstResponse.response.substring(0, 100) +
                     (firstResponse.response.length > 100 ? '...' : '');
                 await this.slackClient.updateProgress(`✅ Recibido: "${summary}". Procesando...`, firstResponse.threadTs);
@@ -811,7 +813,7 @@ DO NOT use for:
                 logger.error('Failed to send confirmation:', error);
             }
         }
-        const responseText = responses.map(r => `[${new Date(r.timestamp).toLocaleTimeString()}] ${r.response}`).join('\n');
+        const responseText = feedbackResponses.map((r) => `[${new Date(r.timestamp).toLocaleTimeString()}] ${r.response}`).join('\n');
         return {
             content: [
                 {
@@ -846,14 +848,14 @@ DO NOT use for:
     async getVersion() {
         const packageJson = {
             name: 'claude-mcp-slack-feedback',
-            version: '1.4.1'
+            version: '1.4.2'
         };
         const buildTime = new Date().toISOString();
         return {
             content: [
                 {
                     type: 'text',
-                    text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.1:\n- Enable debug output to stderr for claude --debug\n- Support multiple debug environment variables\n- Add --info flag to CLI for debug information\n- Improve rate limit handling in Slack client\n\n✨ v1.4.0:\n- Removed local tunnel creation (cloudflared)\n- All communication now uses Cloud Run architecture\n- Fixed "Error creating tunnel" issues\n- Simplified to always use polling mode locally`,
+                    text: `📦 ${packageJson.name} v${packageJson.version}\n🕐 Build time: ${buildTime}\n\n✨ Changes in v1.4.2:\n- Completely removed direct Slack API polling\n- All polling now goes through Cloud Run\n- Fixed rate limiting issues permanently\n- Simplified architecture and removed unused code\n\n✨ v1.4.1:\n- Enable debug output to stderr for claude --debug\n- Support multiple debug environment variables\n- Add --info flag to CLI for debug information`,
                 },
             ],
         };

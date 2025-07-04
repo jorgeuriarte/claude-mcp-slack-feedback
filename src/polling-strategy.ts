@@ -14,36 +14,26 @@ export interface PollingResult {
 }
 
 export class PollingStrategy {
-  // Factory methods for backward compatibility
-  static createCloudPolling(slackClient: SlackClient, sessionId: string, mode: PollingMode): PollingStrategy {
-    return new PollingStrategy(slackClient, sessionId, mode, true);
+  // Simple factory method - always uses Cloud Run
+  static create(slackClient: SlackClient, sessionId: string, mode: PollingMode): PollingStrategy {
+    return new PollingStrategy(slackClient, sessionId, mode);
   }
-  
-  static createFeedbackRequired(slackClient: SlackClient, sessionId: string): PollingStrategy {
-    return new PollingStrategy(slackClient, sessionId, 'feedback-required', false);
-  }
-  
-  static createCourtesyInform(slackClient: SlackClient, sessionId: string): PollingStrategy {
-    return new PollingStrategy(slackClient, sessionId, 'courtesy-inform', false);
-  }
+
   private readonly intensivePollingInterval = 3; // seconds - check every 3 seconds during intensive phase
   private readonly intensivePollingDuration = 60; // seconds - intensive polling for 1 minute
   private readonly pauseInterval = 15; // seconds - pause between intensive polling cycles
   private readonly minPollingInterval = 1; // minimum seconds between webhook calls - can be aggressive
   private lastApiCallTime = 0;
   private rateLimitRetryAfter = 0;
+  private cloudClient: CloudPollingClient;
 
   constructor(
     private slackClient: SlackClient,
     private sessionId: string,
-    private mode: PollingMode,
-    private useCloudPolling: boolean = false,
-    private cloudClient?: CloudPollingClient
+    private mode: PollingMode
   ) {
-    // Initialize cloud client if not provided but cloud polling is enabled
-    if (useCloudPolling && !cloudClient) {
-      this.cloudClient = new CloudPollingClient();
-    }
+    // Always initialize cloud client
+    this.cloudClient = new CloudPollingClient();
   }
 
   /**
@@ -103,40 +93,34 @@ export class PollingStrategy {
         // Ensure we respect rate limits
         await this.ensureRateLimit();
         
-        let responses: FeedbackResponse[];
-        if (this.useCloudPolling && this.cloudClient) {
-          // Poll from Cloud Functions
-          logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
-          const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
-          logger.info(`[POLLING DEBUG] Thread TS: ${threadTs || 'none'}`);
-          
-          const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
-          logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
-          
-          // Also poll channel messages (aggressive polling against our own server)
-          const session = await this.slackClient.getSession?.(this.sessionId);
-          let channelResponses: any[] = [];
-          if (session?.channelId) {
-            logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
-            channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
-            logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
-          }
-          
-          // Combine thread and channel responses
-          const allResponses = [...cloudResponses, ...channelResponses];
-          
-          responses = allResponses.map(r => ({
-            response: r.text,
-            timestamp: r.timestamp,
-            user: r.user,
-            sessionId: this.sessionId,
-            userId: r.user,
-            threadTs: r.threadTs
-          }));
-        } else {
-          // Poll directly from Slack
-          responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        // Always poll from Cloud Functions
+        logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
+        const threadTsToUse = threadTs || await this.slackClient.getLastThreadTs?.(this.sessionId);
+        logger.info(`[POLLING DEBUG] Thread TS: ${threadTsToUse || 'none'}`);
+        
+        const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTsToUse);
+        logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
+        
+        // Also poll channel messages (aggressive polling against our own server)
+        const session = await this.slackClient.getSession?.(this.sessionId);
+        let channelResponses: any[] = [];
+        if (session?.channelId) {
+          logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
+          channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+          logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
         }
+        
+        // Combine thread and channel responses
+        const allResponses = [...cloudResponses, ...channelResponses];
+        
+        const responses = allResponses.map(r => ({
+          response: r.text,
+          timestamp: r.timestamp,
+          user: r.user,
+          sessionId: this.sessionId,
+          userId: r.user,
+          threadTs: r.threadTs
+        }));
 
         attemptCount++;
 
@@ -148,196 +132,134 @@ export class PollingStrategy {
             requiresFeedback: false
           };
         }
-      } catch (error: any) {
-        logger.error('Error during polling:', error);
-        
-        if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
-          // Extract retry-after from error if available
-          const retryAfter = error.retryAfter || 60;
-          this.handleRateLimit(retryAfter);
-          logger.warn(`Rate limit hit, waiting ${retryAfter}s before next attempt`);
-          // Notify user about rate limit
-          await this.sendRateLimitMessage(threadTs);
-          // Wait for rate limit period
-          await this.sleep(retryAfter * 1000);
-          // Reset intensive phase after rate limit
+
+        // Check if we're still in the intensive phase
+        const elapsedTime = (Date.now() - cycleStartTime) / 1000;
+        if (inIntensivePhase && elapsedTime >= this.intensivePollingDuration) {
+          logger.debug(`[PollingStrategy] Intensive phase ended, pausing for ${this.pauseInterval}s`);
+          inIntensivePhase = false;
+          await this.sleep(this.pauseInterval * 1000);
           cycleStartTime = Date.now();
           inIntensivePhase = true;
-          // Continue polling after rate limit wait
-          continue;
+        } else if (inIntensivePhase) {
+          // During intensive phase, poll every intensivePollingInterval seconds
+          await this.sleep(this.intensivePollingInterval * 1000);
         }
-        throw error; // Re-throw non-rate-limit errors
-      }
-
-      // Determine wait time based on phase
-      let waitSeconds: number;
-      const elapsedSeconds = (Date.now() - cycleStartTime) / 1000;
-      
-      if (inIntensivePhase) {
-        // During intensive phase (first minute)
-        if (elapsedSeconds < this.intensivePollingDuration) {
-          waitSeconds = this.intensivePollingInterval;
-          logger.debug(`Intensive polling: waiting ${waitSeconds}s (${Math.round(this.intensivePollingDuration - elapsedSeconds)}s remaining)`);
+      } catch (error: any) {
+        logger.error('[PollingStrategy] Error during feedback polling:', error);
+        
+        // Handle rate limiting errors
+        if (error.message?.includes('rate limit') || 
+            error.message?.includes('rate_limited') ||
+            error.isRateLimit) {
+          const retryAfter = error.retryAfter || 60;
+          logger.warn(`[PollingStrategy] Rate limited, waiting ${retryAfter}s before retrying`);
+          this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
+          await this.sleep(retryAfter * 1000);
         } else {
-          // Switch to pause phase
-          inIntensivePhase = false;
-          waitSeconds = this.pauseInterval;
-          logger.debug(`Entering pause phase: waiting ${waitSeconds}s`);
-          await this.sendWaitingMessage(threadTs);
+          // For other errors, wait a bit before retrying
+          await this.sleep(5000);
         }
-      } else {
-        // After pause, restart intensive phase
-        cycleStartTime = Date.now();
-        inIntensivePhase = true;
-        waitSeconds = this.intensivePollingInterval;
-        logger.debug(`Restarting intensive polling cycle`);
       }
-
-      // Wait for next poll
-      await this.sleep(waitSeconds * 1000);
-      lastCheckTime = Date.now();
     }
   }
 
   /**
-   * Courtesy inform mode - polls for a limited time to check if user wants to change course
+   * Courtesy inform mode - polls for a short duration
    */
-  private async executeCourtesyPolling(_threadTs?: string): Promise<PollingResult> {
-    let attemptCount = 0;
-    let cycleStartTime = Date.now();
-    let lastCheckTime = Date.now();
+  private async executeCourtesyPolling(threadTs?: string): Promise<PollingResult> {
+    const startTime = Date.now();
+    const courtesyDuration = 60; // 1 minute courtesy window
     
-    // For courtesy mode, we only do one intensive cycle
-    const maxDuration = this.intensivePollingDuration + this.pauseInterval;
+    logger.info(`Starting courtesy polling for ${courtesyDuration}s`);
     
-    while ((Date.now() - cycleStartTime) / 1000 < maxDuration) {
-      const elapsedSeconds = (Date.now() - cycleStartTime) / 1000;
-      const waitSeconds = elapsedSeconds < this.intensivePollingDuration 
-        ? this.intensivePollingInterval 
-        : this.pauseInterval;
-      
-      logger.debug(`[PollingStrategy] Courtesy polling ${attemptCount + 1}, waiting ${waitSeconds}s`);
-      
+    while ((Date.now() - startTime) < courtesyDuration * 1000) {
       try {
-        // Ensure we respect rate limits
         await this.ensureRateLimit();
         
-        let responses: FeedbackResponse[];
-        if (this.useCloudPolling && this.cloudClient) {
-          // Poll from Cloud Functions
-          logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
-          const threadTs = await this.slackClient.getLastThreadTs?.(this.sessionId);
-          logger.info(`[POLLING DEBUG] Thread TS: ${threadTs || 'none'}`);
-          
-          const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTs);
-          logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
-          
-          // Also poll channel messages (aggressive polling against our own server)
-          const session = await this.slackClient.getSession?.(this.sessionId);
-          let channelResponses: any[] = [];
-          if (session?.channelId) {
-            logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
-            channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
-            logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
-          }
-          
-          // Combine thread and channel responses
-          const allResponses = [...cloudResponses, ...channelResponses];
-          
-          responses = allResponses.map(r => ({
-            response: r.text,
-            timestamp: r.timestamp,
-            user: r.user,
-            sessionId: this.sessionId,
-            userId: r.user,
-            threadTs: r.threadTs
-          }));
-        } else {
-          // Poll directly from Slack
-          responses = await this.slackClient.pollMessages(this.sessionId, lastCheckTime);
+        // Always poll from Cloud Functions
+        logger.info(`[POLLING DEBUG] Using Cloud Polling for session ${this.sessionId}`);
+        const threadTsToUse = threadTs || await this.slackClient.getLastThreadTs?.(this.sessionId);
+        logger.info(`[POLLING DEBUG] Thread TS: ${threadTsToUse || 'none'}`);
+        
+        const cloudResponses = await this.cloudClient.pollResponses(this.sessionId, threadTsToUse);
+        logger.info(`[POLLING DEBUG] Cloud responses: ${cloudResponses.length}`);
+        
+        // Also poll channel messages
+        const session = await this.slackClient.getSession?.(this.sessionId);
+        let channelResponses: any[] = [];
+        if (session?.channelId) {
+          logger.info(`[POLLING DEBUG] Polling channel messages for ${session.channelId}`);
+          channelResponses = await this.cloudClient.pollChannelMessages(session.channelId);
+          logger.info(`[POLLING DEBUG] Channel responses: ${channelResponses.length}`);
         }
-
-        attemptCount++;
+        
+        // Combine thread and channel responses
+        const allResponses = [...cloudResponses, ...channelResponses];
+        
+        const responses = allResponses.map(r => ({
+          response: r.text,
+          timestamp: r.timestamp,
+          user: r.user,
+          sessionId: this.sessionId,
+          userId: r.user,
+          threadTs: r.threadTs
+        }));
 
         if (responses.length > 0) {
-          // In courtesy mode, ANY response during the monitoring period should be 
-          // passed to the LLM for interpretation. The LLM will decide if it's:
-          // - A simple acknowledgment (continue working)
-          // - A concern/cancellation that needs clarification (use send_question)
-          // - Additional instructions (adjust approach)
-          
-          logger.debug(`[PollingStrategy] Response(s) received during courtesy period`);
+          logger.debug(`[PollingStrategy] Found ${responses.length} responses during courtesy window`);
           return {
             responses,
             shouldStop: false,
-            requiresFeedback: false,
-            requiresInterpretation: true  // Let the LLM decide what to do
+            requiresFeedback: false
           };
         }
+        
+        // Wait before next check
+        await this.sleep(this.intensivePollingInterval * 1000);
+        
       } catch (error: any) {
-        if (error.message?.includes('rate_limited') || error.message?.includes('rate limit')) {
-          // Extract retry-after from error if available
+        logger.error('[PollingStrategy] Error during courtesy polling:', error);
+        
+        // Handle rate limiting
+        if (error.message?.includes('rate limit') || 
+            error.message?.includes('rate_limited') ||
+            error.isRateLimit) {
           const retryAfter = error.retryAfter || 60;
-          this.handleRateLimit(retryAfter);
-          logger.debug(`[PollingStrategy] Rate limit hit in courtesy mode, waiting ${retryAfter}s`);
-          // Wait for rate limit to clear
+          
+          // If rate limit retry would exceed courtesy window, just return
+          if ((Date.now() + retryAfter * 1000) > (startTime + courtesyDuration * 1000)) {
+            logger.info('[PollingStrategy] Rate limit would exceed courtesy window, ending');
+            break;
+          }
+          
+          logger.warn(`[PollingStrategy] Rate limited, waiting ${retryAfter}s`);
+          this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
           await this.sleep(retryAfter * 1000);
-          continue;
+        } else {
+          // For other errors, wait a bit
+          await this.sleep(5000);
         }
-        throw error; // Re-throw non-rate-limit errors
       }
-
-      // Wait for next poll
-      await this.sleep(waitSeconds * 1000);
-      lastCheckTime = Date.now();
-      attemptCount++;
     }
-
-    // No response after full cycle - continue with work
-    logger.debug(`[PollingStrategy] Courtesy polling completed with no response, continuing with work`);
+    
+    logger.info('[PollingStrategy] Courtesy window ended with no responses');
     return {
       responses: [],
-      shouldStop: false,
+      shouldStop: true,
       requiresFeedback: false
     };
   }
 
-
-  /**
-   * Send a message indicating we're still waiting
-   */
-  private async sendWaitingMessage(_threadTs?: string): Promise<void> {
-    // TODO: Implement progress update method in SlackClient
-    logger.debug('[PollingStrategy] Would send waiting message here');
-  }
-
-  /**
-   * Send a message about rate limiting
-   */
-  private async sendRateLimitMessage(_threadTs?: string): Promise<void> {
-    // TODO: Implement progress update method in SlackClient
-    logger.debug('[PollingStrategy] Would send rate limit message here');
-  }
-
-  /**
-   * Sleep for specified milliseconds
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * Ensure we don't exceed rate limits
-   */
   private async ensureRateLimit(): Promise<void> {
-    // Check if we're in a rate limit retry period
+    // If we have a rate limit retry time, wait until it's passed
     if (this.rateLimitRetryAfter > Date.now()) {
       const waitTime = this.rateLimitRetryAfter - Date.now();
-      logger.debug(`[PollingStrategy] In rate limit retry period, waiting ${Math.ceil(waitTime / 1000)}s`);
+      logger.debug(`[PollingStrategy] Waiting ${waitTime}ms for rate limit to clear`);
       await this.sleep(waitTime);
     }
-
-    // Ensure minimum interval between API calls
+    
+    // Ensure minimum time between API calls
     const timeSinceLastCall = Date.now() - this.lastApiCallTime;
     if (timeSinceLastCall < this.minPollingInterval * 1000) {
       const waitTime = (this.minPollingInterval * 1000) - timeSinceLastCall;
@@ -347,11 +269,7 @@ export class PollingStrategy {
     this.lastApiCallTime = Date.now();
   }
 
-  /**
-   * Handle rate limit by setting retry-after time
-   */
-  private handleRateLimit(retryAfter: number): void {
-    this.rateLimitRetryAfter = Date.now() + (retryAfter * 1000);
-    logger.debug(`[PollingStrategy] Rate limit handled, retry after ${new Date(this.rateLimitRetryAfter).toLocaleTimeString()}`);
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

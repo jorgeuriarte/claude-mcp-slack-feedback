@@ -1,14 +1,14 @@
 import { WebClient } from '@slack/web-api';
 import { ConfigManager } from './config-manager.js';
 import { SessionManager } from './session-manager.js';
-import { FeedbackRequest, FeedbackResponse, UserConfig } from './types.js';
+import { FeedbackRequest, UserConfig } from './types.js';
 import { logger } from './logger.js';
 
 export class SlackClient {
   private client?: WebClient;
   private configManager: ConfigManager;
   private sessionManager: SessionManager;
-  private responseQueue: Map<string, FeedbackResponse[]> = new Map();
+  // private responseQueue: Map<string, FeedbackResponse[]> = new Map();  // Not needed - webhooks handled by Cloud Run
   private rateLimitRetries = 3;
   private rateLimitDelay = 1000;
   private lastMessageTs: Map<string, string> = new Map(); // Track last message timestamp per session
@@ -295,6 +295,9 @@ export class SlackClient {
     );
   }
 
+  // pollMessages method removed - all polling now goes through Cloud Run
+  // This eliminates direct Slack API calls and prevents rate limiting
+  /*
   async pollMessages(sessionId: string, since?: number): Promise<FeedbackResponse[]> {
     if (!this.client) {
       throw new Error('Slack client not configured');
@@ -400,6 +403,7 @@ export class SlackClient {
     
     return responses;
   }
+  */
 
   async getChannelInfo(channelId: string): Promise<{ id: string; name: string }> {
     if (!this.client) {
@@ -418,6 +422,8 @@ export class SlackClient {
     };
   }
 
+  // Webhook methods removed - all webhooks handled by Cloud Run
+  /*
   addWebhookResponse(response: FeedbackResponse): void {
     const sessionResponses = this.responseQueue.get(response.sessionId) || [];
     sessionResponses.push(response);
@@ -429,6 +435,7 @@ export class SlackClient {
     this.responseQueue.set(sessionId, []); // Clear after reading
     return responses;
   }
+  */
 
   async findChannel(channelName: string): Promise<string | undefined> {
     if (!this.client) {

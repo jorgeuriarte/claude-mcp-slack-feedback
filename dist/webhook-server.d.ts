@@ -3,10 +3,9 @@ export declare class WebhookServer {
     private app;
     private server?;
     private port;
-    private slackClient;
     private sessionId;
     private feedbackResolvers;
-    constructor(port: number, sessionId: string, slackClient: SlackClient);
+    constructor(port: number, sessionId: string, _slackClient: SlackClient);
     private setupRoutes;
     private handleSlackEvent;
     start(): Promise<void>;

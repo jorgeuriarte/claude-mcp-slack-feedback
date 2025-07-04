@@ -23,14 +23,16 @@ export class WebhookServer {
   private app: Express;
   private server?: Server;
   private port: number;
-  private slackClient: SlackClient;
+  // private slackClient: SlackClient;  // Not used - webhooks handled by Cloud Run
   private sessionId: string;
   private feedbackResolvers: Map<string, (response: any) => void> = new Map();
 
-  constructor(port: number, sessionId: string, slackClient: SlackClient) {
+  constructor(port: number, sessionId: string, _slackClient: SlackClient) {
+    // Note: slackClient parameter kept for compatibility but not used
+    // All webhook handling now done in Cloud Run
     this.port = port;
     this.sessionId = sessionId;
-    this.slackClient = slackClient;
+    // this.slackClient = slackClient;  // Not used
     this.app = express();
     this.setupRoutes();
   }
@@ -79,7 +81,7 @@ export class WebhookServer {
               threadTs: payload.message?.ts || ''
             };
             
-            this.slackClient.addWebhookResponse(response);
+            // this.slackClient.addWebhookResponse(response);  // Webhooks now handled by Cloud Run
             
             // If there's a resolver waiting for this response, resolve it
             if (payload.message?.ts) {
@@ -106,7 +108,7 @@ export class WebhookServer {
         threadTs: event.thread_ts || event.ts || ''
       };
       
-      this.slackClient.addWebhookResponse(response);
+      // this.slackClient.addWebhookResponse(response);  // Webhooks now handled by Cloud Run
       
       // If there's a resolver waiting for this response, resolve it
       if (event.thread_ts) {
